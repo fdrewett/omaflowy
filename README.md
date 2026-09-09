@@ -19,11 +19,40 @@ the window you are in.
              └─────────────────────────────────┘
 ```
 
+## Requirements
+
+- **Omarchy** with `omarchy-shell` (Quickshell).
+- **`python3`** — the helper is standard library only. Nothing to `pip install`.
+- **`xdg-open`** — to open a node in Workflowy when you click its text.
+- **`hyprctl`** — only for the keybinding editor, and it ships with Hyprland.
+- A **Workflowy account** and an [API token](https://workflowy.com/api-key/).
+
+The [`wf` CLI](https://github.com/malcolmocean/workflowy-cli) is *optional* —
+its config is read as a fallback token source, but the settings panel can set
+the token on its own.
+
 ## Install
 
 ```bash
 omarchy plugin add https://github.com/fdrewett/omaflowy.git --enable --yes
 ```
+
+## Removing it
+
+```bash
+omarchy plugin remove io.github.fdrewett.omaflowy --yes
+```
+
+That leaves three things behind, all of them yours to keep or delete:
+
+```bash
+rm -rf ~/.config/omaflowy   # your token and keybinding choices
+rm -rf ~/.cache/omaflowy    # the cached copy of your Workflowy tree
+```
+
+and the `dofile` line in `~/.config/hypr/bindings.lua`, if you added one.
+Nothing else on your system is touched — the plugin writes only inside those
+two directories and never edits your Hyprland config for you.
 
 ## How it authenticates
 
