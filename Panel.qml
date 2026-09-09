@@ -39,8 +39,13 @@ Panel {
   property int todayCount: 0
   property bool todayLoaded: false
 
+  // Workflowy's own Today icon, so the bar and the app agree at a glance. It is
+  // also the glyph omarchy.clock uses for a date, which keeps it native to the
+  // bar rather than borrowed.
+  readonly property string todayIcon: "󰃭"
   readonly property string pillText:
-    store.error !== "" ? "󰅚" : (todayLoaded ? "󰄰 " + todayCount : "󰄰 ·")
+    store.error !== "" ? "󰅚" : (todayLoaded ? todayIcon + " " + todayCount
+                                             : todayIcon + " ·")
 
   readonly property string heroMeta: {
     if (store.error !== "") return store.error

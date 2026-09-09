@@ -5,7 +5,7 @@ type to capture a new one, and hit a key from anywhere to add without leaving
 the window you are in.
 
 ```
-○ 3          ┌ Workflowy ──────────────────────┐
+󰃭 3          ┌ Workflowy ──────────────────────┐
              │ 3 items              2026-09-08 │
              │ ┌───────────────────────┐ ┌───┐ │
              │ │ New todo for today…   │ │Add│ │
@@ -43,9 +43,19 @@ Nothing loads a plugin's Hyprland config automatically. Add one line to
 dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/frank.omaflowy/hypr/omaflowy.lua")
 ```
 
-That gives you `SUPER + ALT + W` to open the panel with the cursor already in
-the capture field, `SUPER + SHIFT + W` for the list, and `SUPER + ALT + I` for
-the Inbox. Edit [`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your own keys.
+That gives you `SUPER + ALT + W` (capture, cursor in the field),
+`SUPER + ALT + T` (today's list) and `SUPER + ALT + I` (Inbox). Edit
+[`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your own.
+
+> Check before you rebind. Hyprland accepts a second bind on a key already in
+> use and the later one **silently wins** — `SUPER + SHIFT + W` was the first
+> choice here and would have quietly taken over Omawrite.
+>
+> ```bash
+> hyprctl binds -j | jq -r '.[] | "\(.modmask) \(.key)  \(.description)"' | sort
+> ```
+>
+> Modmasks: SUPER 64, ALT 8, CTRL 4, SHIFT 1.
 
 ## The three tabs
 
