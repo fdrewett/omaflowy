@@ -319,11 +319,21 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        // `policy: AsNeeded` does not make this non-interactive when there is
+        // nothing to scroll -- measured as visible, opacity 1, interactive,
+        // 10px wide, sitting over x 378..388 of a 388-wide panel with content
+        // exactly as tall as the viewport. Anything flush with the right edge
+        // therefore lost its last 10px to it: the ⋮ menu and the Add button
+        // both looked like they had a broken hit box.
+        ScrollBar.vertical: ScrollBar { id: vbar; policy: ScrollBar.AsNeeded }
 
         Column {
           id: column
-          width: flick.width
+          // Reserve the scrollbar's gutter instead of drawing underneath it.
+          // Bound to vbar.width, which is a constant from the style -- binding
+          // it to whether the bar is *needed* would loop, because that depends
+          // on contentHeight, which depends on this width.
+          width: flick.width - vbar.width
           spacing: Style.space(12)
 
           // The header is assembled here rather than handed to PanelHero's
