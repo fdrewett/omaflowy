@@ -51,6 +51,30 @@ Item {
 
   signal writeFailed(string message)
 
+  // --- keybindings -------------------------------------------------------
+  // Entirely local: reads and writes ~/.config/omaflowy/binds.lua and asks
+  // Hyprland to reload. No network, and nothing here touches Workflowy.
+  property var binds: ({})
+  property var bindLabels: ({})
+  property var bindOrder: []
+  property var bindConflicts: ({})
+  property bool bindsLoaded: false
+  property bool bindsSaving: false
+  property string bindsError: ""
+
+  function loadBinds() {
+    bindsProc.command = [helper, "binds", "read"]
+    bindsProc.running = true
+  }
+
+  function saveBinds(payload) {
+    if (bindsSaving) return
+    bindsSaving = true
+    bindsError = ""
+    bindsProc.command = [helper, "binds", "write", JSON.stringify(payload)]
+    bindsProc.running = true
+  }
+
   function refresh() {
     if (loading) return
     loading = true
@@ -132,6 +156,28 @@ Item {
       root.loading = false
       if (code !== 0 && root.error === "") root.error = "helper exited " + code
     }
+  }
+
+  Process {
+    id: bindsProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.bindsSaving = false
+        var d = null
+        try { d = JSON.parse(text) } catch (e) { d = null }
+        if (!d || d.ok !== true) {
+          root.bindsError = d && d.error ? d.error : "could not read keybindings"
+          return
+        }
+        root.bindsError = ""
+        root.binds = d.binds || ({})
+        if (d.labels) root.bindLabels = d.labels
+        if (d.order) root.bindOrder = d.order
+        root.bindConflicts = d.conflicts || ({})
+        root.bindsLoaded = true
+      }
+    }
+    onExited: function(code, status) { root.bindsSaving = false }
   }
 
   Process {

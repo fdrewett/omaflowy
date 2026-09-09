@@ -7,7 +7,10 @@
 --
 --   dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.lua")
 --
--- To change or disable them, set `omaflowy_binds` BEFORE that line:
+-- The plugin's settings panel (the cog beside Refresh) writes
+-- ~/.config/omaflowy/binds.lua and reloads Hyprland, so the keys can be changed
+-- without editing any of this. To set them by hand instead, either edit that
+-- file or set `omaflowy_binds` BEFORE the dofile line:
 --
 --   omaflowy_binds = {
 --     capture = "SUPER + SHIFT + N",  -- a different key
@@ -49,7 +52,24 @@ local actions = {
   inbox   = { "Workflowy: inbox",           "omarchy-shell omaflowy tab inbox" },
 }
 
-local cfg = omaflowy_binds or {}
+-- Precedence, least to most specific:
+--   defaults  <  omaflowy_binds set here  <  ~/.config/omaflowy/binds.lua
+--
+-- The file is last because it is what the plugin's own settings panel writes,
+-- and a cog that appears to do nothing because a hand-edited global outranks it
+-- would be worse than no cog. Delete the file to fall back to whatever this
+-- config says. It is loaded with loadfile + pcall so a corrupt or half-written
+-- file costs the binds, not the whole Hyprland config.
+local cfg = {}
+for k, v in pairs(omaflowy_binds or {}) do cfg[k] = v end
+
+local chunk = loadfile(os.getenv("HOME") .. "/.config/omaflowy/binds.lua")
+if chunk then
+  local ok, t = pcall(chunk)
+  if ok and type(t) == "table" then
+    for k, v in pairs(t) do cfg[k] = v end
+  end
+end
 
 for name, action in pairs(actions) do
   -- nil means "not configured" and takes the default; false means "off".

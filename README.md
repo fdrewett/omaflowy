@@ -22,7 +22,7 @@ the window you are in.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/<you>/omaflowy.git --enable --yes
+omarchy plugin add https://github.com/fdrewett/omaflowy.git --enable --yes
 ```
 
 ## How it authenticates
@@ -71,7 +71,7 @@ so **skipping this leaves the plugin with no global keys at all.** To enable
 them, add one line to `~/.config/hypr/bindings.lua`:
 
 ```lua
-dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.lua")
+dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.fdrewett.omaflowy/hypr/omaflowy.lua")
 ```
 
 | Default | Does |
@@ -85,8 +85,13 @@ dismisses the panel.
 
 ### Changing or disabling them
 
-Set `omaflowy_binds` **before** the `dofile`. A string rebinds, `false`
-disables, and anything left out keeps its default:
+**From the panel:** the cog beside Refresh opens a keyboard-shortcut editor —
+a toggle to switch each bind off and a field to retype the combo. Saving writes
+`~/.config/omaflowy/binds.lua` and reloads Hyprland. It warns when a combo is
+already held by another bind, which is otherwise invisible.
+
+**By hand:** set `omaflowy_binds` **before** the `dofile`. A string rebinds,
+`false` disables, and anything left out keeps its default:
 
 ```lua
 omaflowy_binds = {
@@ -94,7 +99,7 @@ omaflowy_binds = {
   today   = false,                -- off
   -- inbox omitted -> keeps SUPER + ALT + I
 }
-dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.lua")
+dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.fdrewett.omaflowy/hypr/omaflowy.lua")
 ```
 
 > **Check before you bind.** Hyprland accepts a second bind on a key already in
@@ -110,6 +115,11 @@ dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.
 > Modmasks: SUPER 64, ALT 8, CTRL 4, SHIFT 1. Omarchy's own binds show as
 > `dispatcher: __lua` with a numeric `arg` rather than the command, so match on
 > the description.
+
+Precedence is defaults < `omaflowy_binds` < `~/.config/omaflowy/binds.lua`. The
+file wins because it is what the settings panel writes, and a cog that appeared
+to do nothing because a hand-edited global outranked it would be worse than no
+cog. Delete the file to fall back to whatever `bindings.lua` says.
 
 ## The three tabs
 
@@ -262,9 +272,13 @@ it lands in the trusted directory. Hence the copy.
 
 ## Publishing
 
-The id is `frank.omaflowy`. Change it in `manifest.json` to your own namespace
-(`io.github.<you>.omaflowy`) before publishing, and update the `dofile` path in
-the keybinding instructions to match — the plugin directory is named after the id.
+The id is `io.github.fdrewett.omaflowy`, the reverse-domain convention the
+marketplace expects. Forking to publish your own? Change it in `manifest.json`
+to your namespace — the plugin directory is named after the id, so the `dofile`
+path in the keybinding instructions follows it.
+
+Submit via the marketplace's
+[issue template](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml).
 
 ## Licence
 

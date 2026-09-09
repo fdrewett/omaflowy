@@ -11,7 +11,7 @@ import qs.Ui
 // and the popup hangs off the pill as its anchor.
 Panel {
   id: root
-  moduleName: "frank.omaflowy"
+  moduleName: "io.github.fdrewett.omaflowy"
   ipcTarget: "omaflowy"
   manageIpc: false
 
@@ -32,6 +32,12 @@ Panel {
   readonly property var sources: ["today", "inbox", "all"]
   readonly property var sourceLabels: ["Today", "Inbox", "All"]
   property int sourceIndex: 0
+  property bool settingsOpen: false
+
+  function toggleSettings() {
+    settingsOpen = !settingsOpen
+    if (settingsOpen && !store.bindsLoaded) store.loadBinds()
+  }
 
   // The pill always counts today, whatever tab is showing. A bar number that
   // changed because you clicked a tab would not be a number you could trust
@@ -229,6 +235,12 @@ Panel {
       root.captureFocus(name)
       return "ok"
     }
+    // Open the keyboard-shortcut editor.
+    function settings(): string {
+      root.open()
+      if (!root.settingsOpen) root.toggleSettings()
+      return "ok"
+    }
     // Open + select a tab, leaving focus on the panel.
     function tab(name: string): string {
       var i = root.sources.indexOf(String(name || "").toLowerCase())
@@ -317,13 +329,24 @@ Panel {
             metaOpacity: store.error !== "" ? 1.0 : 0.7
 
             trailingControl: Component {
-              PanelActionButton {
-                iconText: "󰑐"
-                tooltipText: "Refresh"
-                foreground: root.foreground
-                enabled: !store.loading
-                opacity: store.loading ? 0.4 : 1.0
-                onClicked: root.refresh()
+              Row {
+                spacing: Style.space(4)
+
+                PanelActionButton {
+                  iconText: "󰑐"
+                  tooltipText: "Refresh"
+                  foreground: root.foreground
+                  enabled: !store.loading
+                  opacity: store.loading ? 0.4 : 1.0
+                  onClicked: root.refresh()
+                }
+
+                PanelActionButton {
+                  iconText: "󰒓"
+                  tooltipText: root.settingsOpen ? "Back to the list" : "Keyboard shortcuts"
+                  foreground: root.settingsOpen ? root.accent : root.foreground
+                  onClicked: root.toggleSettings()
+                }
               }
             }
           }
@@ -331,6 +354,7 @@ Panel {
           Row {
             width: parent.width
             spacing: Style.space(8)
+            visible: !root.settingsOpen
 
             TextField {
               id: capture
@@ -356,6 +380,7 @@ Panel {
 
           ButtonGroup {
             width: parent.width
+            visible: !root.settingsOpen
             options: root.sourceLabels
             // ButtonGroup speaks in labels, not indices, so the selected tab
             // round-trips through sourceLabels rather than being tracked twice.
@@ -371,6 +396,7 @@ Panel {
 
           Column {
             id: itemColumn
+            visible: !root.settingsOpen
             width: parent.width
             spacing: Style.space(4)
 
@@ -385,12 +411,12 @@ Panel {
           }
 
           PanelSeparator {
-            visible: root.showFound
+            visible: root.showFound && !root.settingsOpen
             foreground: root.foreground
           }
 
           Column {
-            visible: root.showFound
+            visible: root.showFound && !root.settingsOpen
             width: parent.width
             spacing: Style.space(10)
 
@@ -417,9 +443,70 @@ Panel {
             }
           }
 
+          Column {
+            visible: root.settingsOpen
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              text: "KEYBOARD SHORTCUTS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Capture opens on whichever tab was last shown. Press Enter "
+                    + "in a field to save; changes reload Hyprland straight away."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Column {
+              id: bindColumn
+              width: parent.width
+              spacing: Style.space(12)
+
+              Repeater {
+                model: store.bindOrder
+                BindRow {
+                  required property var modelData
+                  width: bindColumn.width
+                  action: modelData
+                }
+              }
+            }
+
+            Text {
+              visible: store.bindsError !== ""
+              width: parent.width
+              textFormat: Text.PlainText
+              text: store.bindsError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "These only apply if hypr/omaflowy.lua is sourced from your "
+                    + "bindings.lua. Written to ~/.config/omaflowy/binds.lua."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              opacity: 0.8
+            }
+          }
+
           Text {
             visible: store.everLoaded && store.error === "" && store.count === 0
-                     && !root.showFound
+                     && !root.showFound && !root.settingsOpen
             width: parent.width
             textFormat: Text.PlainText
             text: root.sources[root.sourceIndex] === "all"
@@ -432,6 +519,82 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  component BindRow: Column {
+    id: bindRow
+    required property string action
+
+    readonly property var entry: store.binds[action] || ({})
+    readonly property bool enabled: entry.enabled !== false
+    readonly property string conflict: String(store.bindConflicts[action] || "")
+
+    spacing: Style.space(4)
+
+    function commit(key, on) {
+      var payload = {}
+      payload[bindRow.action] = { key: key, enabled: on }
+      store.saveBinds(payload)
+    }
+
+    Row {
+      width: parent.width
+      spacing: Style.space(8)
+
+      Text {
+        width: parent.width - toggle.width - keyField.width - Style.space(16)
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: store.bindLabels[bindRow.action] || bindRow.action
+        color: bindRow.enabled ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
+      }
+
+      TextField {
+        id: keyField
+        width: Style.space(170)
+        anchors.verticalCenter: parent.verticalCenter
+        enabled: bindRow.enabled
+        opacity: bindRow.enabled ? 1.0 : 0.45
+        foreground: root.foreground
+        placeholderText: "SUPER + ALT + W"
+        // Bound one way only. Binding `text` straight to the store would
+        // rewrite the box under the cursor on every save round-trip, so it is
+        // seeded on load and on external change, then left alone while typing.
+        Component.onCompleted: text = bindRow.entry.key || ""
+        Connections {
+          target: store
+          function onBindsChanged() {
+            if (!keyField.activeFocus) keyField.text = bindRow.entry.key || ""
+          }
+        }
+        onAccepted: bindRow.commit(text, true)
+      }
+
+      ToggleSwitch {
+        id: toggle
+        anchors.verticalCenter: parent.verticalCenter
+        checked: bindRow.enabled
+        busy: store.bindsSaving
+        foreground: root.foreground
+        onToggled: bindRow.commit(keyField.text, !bindRow.enabled)
+      }
+    }
+
+    Text {
+      // Hyprland takes a duplicate bind and the later one silently wins, so
+      // this warning is the only place a collision is ever visible.
+      visible: bindRow.enabled && bindRow.conflict !== ""
+      width: parent.width
+      textFormat: Text.PlainText
+      text: "Already used by " + bindRow.conflict + " — the later bind wins"
+      color: root.urgent
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
     }
   }
 

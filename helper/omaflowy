@@ -31,7 +31,7 @@ ONE REQUEST PER MINUTE, so it is cached on disk, shared by every instance, and
 served stale rather than risking a 429. Total cost is now at most two requests
 a minute no matter how many monitors, tabs, or refreshes are in play.
 """
-import argparse, datetime, errno, fcntl, html, json, os, re, sys, time
+import argparse, datetime, errno, fcntl, html, json, os, re, subprocess, sys, time
 import urllib.request, urllib.error, urllib.parse
 
 
@@ -40,6 +40,16 @@ class FetchError(RuntimeError):
 
 
 BASE = "https://workflowy.com/api/v1"
+BINDS_FILE = os.path.expanduser("~/.config/omaflowy/binds.lua")
+BIND_ACTIONS = ("capture", "today", "inbox")
+BIND_DEFAULTS = {"capture": "SUPER + ALT + W",
+                 "today":   "SUPER + ALT + T",
+                 "inbox":   "SUPER + ALT + I"}
+BIND_LABELS = {"capture": "Capture",
+               "today":   "Open Today",
+               "inbox":   "Open Inbox"}
+MODBITS = {"SHIFT": 1, "CAPS": 2, "CTRL": 4, "CONTROL": 4, "ALT": 8,
+           "MOD2": 16, "MOD3": 32, "SUPER": 64, "MOD5": 128}
 CONFIG = os.path.expanduser("~/.workflowy/config.json")
 CACHE_DIR = os.path.expanduser("~/.cache/omaflowy")
 EXPORT_CACHE = os.path.join(CACHE_DIR, "export.json")
@@ -462,6 +472,135 @@ def cmd_add(args):
     return {"ok": True}
 
 
+# --------------------------------------------------------------------------
+# keybindings
+#
+# The config is a Lua file returning a table, not JSON, for one reason: the
+# consumer is hypr/omaflowy.lua and Lua has no JSON parser in its standard
+# library. A Lua table is one `loadfile` away there, and writing it from here
+# costs a dozen lines.
+# --------------------------------------------------------------------------
+
+def parse_combo(combo):
+    """"SUPER + ALT + W" -> (modmask, "W"). None if it does not parse."""
+    parts = [p.strip().upper() for p in str(combo or "").split("+") if p.strip()]
+    if not parts:
+        return None
+    mask, key = 0, None
+    for p in parts:
+        if p in MODBITS:
+            mask |= MODBITS[p]
+        elif key is None:
+            key = p
+        else:
+            return None                      # two non-modifier keys
+    return (mask, key) if key else None
+
+
+def read_binds():
+    """Effective binds. Mirrors the precedence in hypr/omaflowy.lua."""
+    out = {a: {"key": BIND_DEFAULTS[a], "enabled": True} for a in BIND_ACTIONS}
+    try:
+        text = open(BINDS_FILE).read()
+    except OSError:
+        return out
+    # Written only by write_binds below, so a narrow parse is honest here --
+    # this is reading back our own format, not evaluating arbitrary Lua.
+    for a in BIND_ACTIONS:
+        m = re.search(r"\b%s\s*=\s*(false|\"([^\"]*)\")" % a, text)
+        if not m:
+            continue
+        if m.group(1) == "false":
+            out[a]["enabled"] = False
+        else:
+            out[a]["key"] = m.group(2)
+    return out
+
+
+def write_binds(binds):
+    os.makedirs(os.path.dirname(BINDS_FILE), exist_ok=True)
+    lines = ["-- Written by Omaflowy's settings panel. Safe to edit or delete.",
+             "-- Deleting it restores the defaults in hypr/omaflowy.lua.",
+             "return {"]
+    for a in BIND_ACTIONS:
+        b = binds.get(a) or {}
+        if not b.get("enabled", True):
+            lines.append("  %s = false," % a)
+        else:
+            key = str(b.get("key") or BIND_DEFAULTS[a]).replace('"', "")
+            lines.append('  %s = "%s",' % (a, key))
+    lines.append("}")
+    tmp = BINDS_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.replace(tmp, BINDS_FILE)
+
+
+def hypr_conflicts(binds):
+    """Which requested combos another bind already holds.
+
+    Hyprland accepts a duplicate bind and the later one silently wins, with
+    nothing in `hyprctl configerrors` -- so a conflict is only ever visible by
+    asking. Omaflowy's own binds are filtered out, otherwise every key it
+    already holds would report as a conflict with itself.
+    """
+    try:
+        raw = subprocess.run(["hyprctl", "binds", "-j"], capture_output=True,
+                             text=True, timeout=10).stdout
+        rows = json.loads(raw)
+    except Exception:
+        return {}
+    held = {}
+    for r in rows:
+        desc = str(r.get("description") or "")
+        if desc.startswith("Workflowy:"):
+            continue
+        key = str(r.get("key") or "").upper()
+        if not key:
+            continue
+        held.setdefault((r.get("modmask"), key), desc or "another bind")
+    out = {}
+    for a in BIND_ACTIONS:
+        b = binds.get(a) or {}
+        if not b.get("enabled", True):
+            continue
+        combo = parse_combo(b.get("key"))
+        if combo and combo in held:
+            out[a] = held[combo]
+    return out
+
+
+def cmd_binds(args):
+    if args.op == "read":
+        binds = read_binds()
+        return {"ok": True, "binds": binds, "labels": BIND_LABELS,
+                "order": list(BIND_ACTIONS), "conflicts": hypr_conflicts(binds),
+                "file": BINDS_FILE}
+    try:
+        incoming = json.loads(args.json or "{}")
+    except ValueError:
+        return {"ok": False, "error": "bad json"}
+    binds = read_binds()
+    for a in BIND_ACTIONS:
+        if a not in incoming:
+            continue
+        v = incoming[a]
+        if isinstance(v, dict):
+            if "enabled" in v: binds[a]["enabled"] = bool(v["enabled"])
+            if v.get("key"):
+                if not parse_combo(v["key"]):
+                    return {"ok": False, "error": "cannot parse %r" % v["key"]}
+                binds[a]["key"] = str(v["key"])
+    write_binds(binds)
+    reloaded = True
+    try:
+        subprocess.run(["hyprctl", "reload"], capture_output=True, timeout=10)
+    except Exception:
+        reloaded = False
+    return {"ok": True, "binds": binds, "reloaded": reloaded,
+            "conflicts": hypr_conflicts(binds)}
+
+
 def main():
     ap = argparse.ArgumentParser(prog="omaflowy")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -478,6 +617,11 @@ def main():
     c = sub.add_parser("complete")
     c.add_argument("node_id")
     c.set_defaults(fn=cmd_complete)
+
+    bd = sub.add_parser("binds")
+    bd.add_argument("op", choices=["read", "write"])
+    bd.add_argument("json", nargs="?", default="{}")
+    bd.set_defaults(fn=cmd_binds)
 
     mv = sub.add_parser("move")
     mv.add_argument("node_id")
