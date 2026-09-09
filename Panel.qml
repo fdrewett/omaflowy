@@ -39,13 +39,13 @@ Panel {
   property int todayCount: 0
   property bool todayLoaded: false
 
-  // Workflowy's own Today icon, so the bar and the app agree at a glance. It is
-  // also the glyph omarchy.clock uses for a date, which keeps it native to the
-  // bar rather than borrowed.
+  // Workflowy's own Today icon (and the glyph omarchy.clock uses for a date, so
+  // it is native to the bar rather than borrowed). It means exactly one thing
+  // in this panel -- "today" -- which is why the bar pill does not also use it:
+  // two different meanings on one glyph and neither reads.
   readonly property string todayIcon: "󰃭"
   readonly property string pillText:
-    store.error !== "" ? "󰅚" : (todayLoaded ? todayIcon + " " + todayCount
-                                             : todayIcon + " ·")
+    store.error !== "" ? "󰅚" : (todayLoaded ? "󰄰 " + todayCount : "󰄰 ·")
 
   readonly property string heroMeta: {
     if (store.error !== "") return store.error
@@ -469,7 +469,7 @@ Panel {
 
       PanelActionButton {
         id: moveButton
-        iconText: "\udb82\udc17"
+        iconText: root.todayIcon
         tooltipText: "Move to today"
         foreground: hovered ? root.accent : root.dim
         fontSize: Style.font.body

@@ -5,7 +5,7 @@ type to capture a new one, and hit a key from anywhere to add without leaving
 the window you are in.
 
 ```
-󰃭 3          ┌ Workflowy ──────────────────────┐
+○ 3          ┌ Workflowy ──────────────────────┐
              │ 3 items              2026-09-08 │
              │ ┌───────────────────────┐ ┌───┐ │
              │ │ New todo for today…   │ │Add│ │
@@ -99,8 +99,9 @@ of day, when the pill carries one, is shown on the line and sorts the section.
 
 ### Move to today
 
-Inbox and All rows carry a move button. It files the node under today's day node
-**and sets `layoutMode` to `todo`**.
+Inbox and All rows carry a move button, marked with Workflowy's own Today icon
+(`󰃭`). It files the node under today's day node **and sets `layoutMode` to
+`todo`**.
 
 Both halves are needed. Moving alone would drop an Inbox bullet into today and
 then hide it, because the Today tab only lists todo-formatted items — the thing
