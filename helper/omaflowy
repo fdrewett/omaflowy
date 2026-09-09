@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""omaflowy helper — the only thing in this plugin that talks to Workflowy.
+
+The QML side runs this and parses one JSON blob. Keeping the network and the
+tree-walking here means the panel never has to chain curl calls or reimplement
+the classification rules in JavaScript.
+
+Standard library only, so there is nothing to install.
+
+The token is read at runtime from ~/.workflowy/config.json -- the file the
+`wf` CLI already owns. No credential is ever stored in this repo or in
+shell.json.
+
+Subcommands:
+  today [--date D] [--depth N]   the day's open items, as JSON
+  complete <node-id>             mark one node complete
+  add <text>                     create a todo under the day node
+"""
+import argparse, concurrent.futures, datetime, html, json, os, re, sys
+import urllib.request, urllib.error, urllib.parse
+
+BASE = "https://workflowy.com/api/v1"
+CONFIG = os.path.expanduser("~/.workflowy/config.json")
+TIMEOUT = 20
+
+
+# --------------------------------------------------------------------------
+# transport
+# --------------------------------------------------------------------------
+
+def token():
+    with open(CONFIG) as fh:
+        d = json.load(fh)
+    account = d.get("activeAccount") or "default"
+    return d["accounts"][account]["token"]
+
+
+def _req(method, path, payload=None, **params):
+    url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": "Bearer " + token(),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    })
+    try:
+        body = urllib.request.urlopen(req, timeout=TIMEOUT).read().decode()
+        return json.loads(body) if body.strip() else {"status": "ok"}
+    except urllib.error.HTTPError as e:
+        return {"__error__": e.code, "body": e.read().decode()[:200]}
+    except Exception as e:                                  # DNS, TLS, timeout
+        return {"__error__": "network", "body": str(e)[:200]}
+
+
+def children(parent_id):
+    """A node's children, sorted by `priority`.
+
+    Two traps, both paid for already (see vault 24.34):
+      - the envelope key is "nodes", not "items"
+      - siblings come back UNORDERED; `priority` is the sort key
+    A 404 means the calendar day node has not been materialised yet, which is
+    "nothing there", not an error -- so it returns [] like any empty node.
+    """
+    r = _req("GET", "/nodes", parent_id=parent_id)
+    if isinstance(r, dict) and r.get("__error__"):
+        return []
+    nodes = (r.get("nodes") or r.get("items") or []) if isinstance(r, dict) else r
+    return sorted(nodes, key=lambda n: n.get("priority") or 0)
+
+
+# --------------------------------------------------------------------------
+# text
+# --------------------------------------------------------------------------
+
+TIME_RE = re.compile(r"<time[^>]*>(.*?)</time>", re.I | re.S)
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+def plain(name):
+    """Workflowy names are HTML. Render them the way the app shows them.
+
+    <time> pills carry their own display text as the element body, so keeping
+    that and dropping the attributes is what makes a date read as
+    "Wed, Sep 9, 2026" instead of a wall of startYear/startMonth markup.
+    """
+    if not name:
+        return ""
+    s = TIME_RE.sub(lambda m: m.group(1), name)
+    s = TAG_RE.sub("", s)
+    return html.unescape(s).strip()
+
+
+# --------------------------------------------------------------------------
+# walk
+# --------------------------------------------------------------------------
+
+def walk(root, max_depth, workers=16):
+    """Breadth-first walk, fetching each level's children in parallel.
+
+    There is no subtree endpoint, so depth costs requests: a measured walk of
+    one day was 1 -> 6 -> 22 -> 65 -> 85 requests per level. Serially that is
+    ~5s; a level at a time through a pool is ~1.5s. Depth 4 is the default
+    because it reaches the deepest todos actually observed (day > section >
+    person > item) while stopping above the long reference outlines, which
+    are where the request count explodes and no todos live.
+
+    Yields (node, depth, trail) where trail is the list of ancestor nodes.
+    """
+    frontier = [(root, ())]
+    for depth in range(max_depth):
+        if not frontier:
+            return
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda f: children(f[0]), frontier))
+        nxt = []
+        for (parent_id, trail), kids in zip(frontier, results):
+            for k in kids:
+                yield k, depth, trail
+                nxt.append((k["id"], trail + (k,)))
+        frontier = nxt
+
+
+def classify(day, max_depth, note_depth, include_under_completed, exclude=()):
+    """Split the day's subtree into real todos and everything else that's open.
+
+    `todos` are the unambiguous ones: layoutMode == "todo" and not completed.
+    `notes` are open leaf bullets -- the way the day actually gets written most
+    of the time. They are shown separately and dimmed, never counted in the
+    pill, because a leaf bullet is as often narrative ("dinner with the folks")
+    as it is an action.
+
+    A completed ancestor prunes its whole subtree by default. Completion is
+    used on section headers here to mean "this block is dealt with", so
+    surfacing its children as open work reads as noise.
+
+    `exclude` prunes by ancestor name. Recurring templates are the reason it
+    exists: a daily check-in template stamped 12 empty section headers into
+    one day, every one of them technically an open leaf bullet, which buried
+    the two lines actually typed that day. There is no structural flag that
+    separates scaffolding from work -- the template's items are ordinary
+    bullets -- so this is a name match the user controls rather than a
+    heuristic that guesses.
+    """
+    seen_parents = set()
+    rows = []
+    for node, depth, trail in walk(day, max_depth):
+        seen_parents.add(node.get("parent_id"))
+        rows.append((node, depth, trail))
+
+    todos, notes = [], []
+    for node, depth, trail in rows:
+        if node.get("completed"):
+            continue
+        if exclude and any(
+                any(x.lower() in plain(a.get("name")).lower() for x in exclude)
+                for a in trail):
+            continue
+        if not include_under_completed and any(a.get("completed") for a in trail):
+            continue
+        text = plain(node.get("name"))
+        if not text:
+            continue
+        layout = (node.get("data") or {}).get("layoutMode")
+        item = {
+            "id": node["id"],
+            "text": text,
+            "note": plain(node.get("note")),
+            "depth": depth,
+            "path": " / ".join(plain(a.get("name"))[:28] for a in trail),
+            "createdAt": node.get("createdAt"),
+        }
+        if layout == "todo":
+            todos.append(item)
+        elif node["id"] not in seen_parents and depth < note_depth:
+            # A leaf: nothing was found underneath it during the walk.
+            notes.append(item)
+    # Newest first, so what was typed today sits above anything carried over.
+    notes.sort(key=lambda i: i.get("createdAt") or 0, reverse=True)
+    return todos, notes
+
+
+# --------------------------------------------------------------------------
+# commands
+# --------------------------------------------------------------------------
+
+def cmd_today(args):
+    day = args.date or datetime.date.today().isoformat()
+    try:
+        exclude = [x.strip() for x in (args.exclude or "").split(",") if x.strip()]
+        todos, notes = classify(day, args.depth, args.note_depth,
+                                args.include_under_completed, exclude)
+    except FileNotFoundError:
+        return {"ok": False, "error": "no ~/.workflowy/config.json — run `wf` to log in"}
+    except KeyError:
+        return {"ok": False, "error": "no token in ~/.workflowy/config.json"}
+    return {
+        "ok": True,
+        "date": day,
+        "todos": todos,
+        "notes": notes,
+        "counts": {"todos": len(todos), "notes": len(notes)},
+        "fetchedAt": int(datetime.datetime.now().timestamp()),
+    }
+
+
+def cmd_complete(args):
+    r = _req("POST", "/nodes/%s/complete" % args.node_id)
+    if isinstance(r, dict) and r.get("__error__"):
+        return {"ok": False, "error": "%s %s" % (r["__error__"], r.get("body", ""))}
+    return {"ok": True, "id": args.node_id}
+
+
+def cmd_add(args):
+    text = args.text.strip()
+    if not text:
+        return {"ok": False, "error": "empty"}
+    # "- [ ] " is the markdown marker that makes create() set layoutMode:todo,
+    # so anything captured here comes back as a real todo on the next refresh
+    # instead of an untyped bullet. Markdown is only parsed on create.
+    if not text.startswith("- [ ]"):
+        text = "- [ ] " + text
+    day = args.date or datetime.date.today().isoformat()
+    # POST against a bare date materialises the calendar day node if today has
+    # no bullets yet; GET against the same date would 404.
+    r = _req("POST", "/nodes", {"parent_id": day, "name": text, "position": "bottom"})
+    if isinstance(r, dict) and r.get("__error__"):
+        return {"ok": False, "error": "%s %s" % (r["__error__"], r.get("body", ""))}
+    return {"ok": True}
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="omaflowy")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    t = sub.add_parser("today")
+    t.add_argument("--date")
+    t.add_argument("--depth", type=int, default=4)
+    t.add_argument("--note-depth", type=int, default=3)
+    t.add_argument("--include-under-completed", action="store_true")
+    t.add_argument("--exclude", default="",
+                   help="comma-separated ancestor names to prune (recurring templates)")
+    t.set_defaults(fn=cmd_today)
+
+    c = sub.add_parser("complete")
+    c.add_argument("node_id")
+    c.set_defaults(fn=cmd_complete)
+
+    a = sub.add_parser("add")
+    a.add_argument("text")
+    a.add_argument("--date")
+    a.set_defaults(fn=cmd_add)
+
+    args = ap.parse_args()
+    out = args.fn(args)
+    json.dump(out, sys.stdout)
+    sys.stdout.write("\n")
+    return 0 if out.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
