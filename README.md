@@ -25,43 +25,91 @@ the window you are in.
 omarchy plugin add https://github.com/<you>/omaflowy.git --enable --yes
 ```
 
-It authenticates as the `wf` CLI does, reading the token at runtime from
-`~/.workflowy/config.json` (`accounts.<name>.token`). Nothing is stored in this
-repo or in `shell.json`. If you have never used `wf`, create that file with a
-[Workflowy API token](https://workflowy.com/api-key/):
+## How it authenticates
+
+A **Workflowy personal API token** — no OAuth, no account linking, no server in
+the middle. Get one at <https://workflowy.com/api-key/>.
+
+The token is read **at runtime** from `~/.workflowy/config.json`, the file the
+[`wf` CLI](https://github.com/malcolmocean/workflowy-cli) already owns:
 
 ```json
 { "activeAccount": "default", "accounts": { "default": { "token": "…" } } }
 ```
 
-## Global keybinding
+Nothing is stored in this repo, in `shell.json`, or anywhere the plugin writes.
+Specifically:
 
-Nothing loads a plugin's Hyprland config automatically. Add one line to
-`~/.config/hypr/bindings.lua`:
+- The token is used **only** as an `Authorization: Bearer` header to
+  `workflowy.com`. That is the sole outbound host — there is no telemetry and
+  no third party.
+- It is **never passed as a command-line argument**, so it does not appear in
+  `ps` output to other users on the machine. The QML side never sees it at all;
+  it hands the helper node ids and text, and the helper adds the header.
+- It is never logged. The `debug` IPC method reports counts and panel state
+  only, never content or credentials.
+
+**What does land on disk:** `~/.cache/omaflowy/export.json`, a copy of your
+whole Workflowy account (~19k nodes / ~6MB in one real account) used to serve
+all three tabs from a single request. The token is *not* in it, but the content
+is everything you have ever written, so the plugin creates the directory `0700`
+and the file `0600` — owner-only. Delete it any time; it is rebuilt on the next
+refresh.
+
+Read [`helper/omaflowy`](helper/omaflowy) if you would rather check than take
+this on trust. It is standard-library Python with no dependencies, and it is
+the only file that talks to the network.
+
+> Plugins run **unsandboxed with your user permissions** in the shared Omarchy
+> shell process. That is true of every plugin, this one included — read the
+> source before installing it.
+
+## Global keybindings
+
+Optional, and opt-in: nothing loads a plugin's Hyprland config automatically,
+so **skipping this leaves the plugin with no global keys at all.** To enable
+them, add one line to `~/.config/hypr/bindings.lua`:
 
 ```lua
-dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/frank.omaflowy/hypr/omaflowy.lua")
+dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.lua")
 ```
 
-| Bind | Does |
+| Default | Does |
 |---|---|
 | `SUPER + ALT + W` | open on the current tab, cursor in the field |
 | `SUPER + ALT + T` | open on **Today**, cursor in the field |
 | `SUPER + ALT + I` | open on **Inbox**, focus left on the panel |
 
 The two capture binds toggle: pressing again while the cursor is in the field
-dismisses the panel. Edit [`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your
-own keys.
+dismisses the panel.
 
-> Check before you rebind. Hyprland accepts a second bind on a key already in
-> use and the later one **silently wins** — `SUPER + SHIFT + W` was the first
-> choice here and would have quietly taken over Omawrite.
+### Changing or disabling them
+
+Set `omaflowy_binds` **before** the `dofile`. A string rebinds, `false`
+disables, and anything left out keeps its default:
+
+```lua
+omaflowy_binds = {
+  capture = "SUPER + SHIFT + N",  -- rebind
+  today   = false,                -- off
+  -- inbox omitted -> keeps SUPER + ALT + I
+}
+dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.lua")
+```
+
+> **Check before you bind.** Hyprland accepts a second bind on a key already in
+> use and the later one **silently wins** — nothing warns, and `hyprctl
+> configerrors` stays empty. The defaults were moved off `SUPER + SHIFT + W`
+> for exactly that reason: it was already Omawrite, and sourcing this file
+> would have quietly taken it over.
 >
 > ```bash
 > hyprctl binds -j | jq -r '.[] | "\(.modmask) \(.key)  \(.description)"' | sort
 > ```
 >
-> Modmasks: SUPER 64, ALT 8, CTRL 4, SHIFT 1.
+> Modmasks: SUPER 64, ALT 8, CTRL 4, SHIFT 1. Omarchy's own binds show as
+> `dispatcher: __lua` with a numeric `arg` rather than the command, so match on
+> the description.
 
 ## The three tabs
 

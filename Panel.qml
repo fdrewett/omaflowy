@@ -82,7 +82,14 @@ Panel {
   function openNode(id) {
     // Web URLs address a node by the last segment of its UUID -- the same
     // 12-character short id the MCP server uses.
-    if (bar && id) bar.run("xdg-open 'https://workflowy.com/#/" + String(id).slice(-12) + "'")
+    //
+    // bar.run() hands this to a shell, so the id is validated rather than
+    // trusted. Ids come from the API and are hex today, but "the server only
+    // ever sends us safe values" is not a property this side can enforce, and
+    // the cost of being wrong is arbitrary command execution.
+    var short = String(id || "").slice(-12)
+    if (!bar || !/^[0-9a-f]{12}$/.test(short)) return
+    bar.run("xdg-open 'https://workflowy.com/#/" + short + "'")
   }
 
   function submitCapture() {

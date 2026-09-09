@@ -98,7 +98,15 @@ def export(max_age):
     except (OSError, ValueError):
         pass
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    # 0700 / 0600 throughout. The cache is a full copy of the account -- every
+    # node the user has ever written -- and the default 0644 would leave that
+    # readable by any other local user. This is the single most sensitive thing
+    # the plugin puts on disk; the token itself never touches it.
+    os.makedirs(CACHE_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(CACHE_DIR, 0o700)            # tighten a directory made earlier
+    except OSError:
+        pass
     with open(LOCK_FILE, "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
@@ -113,7 +121,11 @@ def export(max_age):
             r = _req("GET", "/nodes-export")
             if isinstance(r, dict) and not r.get("__error__") and r.get("nodes"):
                 tmp = EXPORT_CACHE + ".tmp"
-                with open(tmp, "w") as fh:
+                # Create 0600 up front rather than chmod-ing after: between a
+                # default-mode create and a later chmod, the whole account sits
+                # world-readable on disk.
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w") as fh:
                     json.dump(r, fh)
                 os.replace(tmp, EXPORT_CACHE)   # never leave a half-written cache
                 return r, True is False         # fresh

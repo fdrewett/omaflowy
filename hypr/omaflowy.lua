@@ -1,29 +1,60 @@
--- Omaflowy (Omarchy shell plugin). Source this from ~/.config/hypr/bindings.lua:
+-- Omaflowy (Omarchy shell plugin) — global keybindings.
 --
---   dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/frank.omaflowy/hypr/omaflowy.lua")
+-- Nothing loads a plugin's hypr/*.lua automatically. The shell reads
+-- manifest.json and the QML and never touches Hyprland config, so sourcing
+-- this is opt-in and skipping it entirely is a supported way to have no global
+-- keys at all.
 --
--- Nothing loads a plugin's hypr/*.lua automatically -- the shell reads
--- manifest.json and the QML, and never touches Hyprland config. The line above
--- is the whole wiring.
+--   dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/<plugin-id>/hypr/omaflowy.lua")
 --
--- These are SUGGESTIONS, not reservations. Hyprland accepts a second bind on a
--- key already in use and the later one simply wins, silently: SUPER+SHIFT+W
--- was tried here first and would have quietly taken over Omawrite. Check
--- before adding your own:
+-- To change or disable them, set `omaflowy_binds` BEFORE that line:
+--
+--   omaflowy_binds = {
+--     capture = "SUPER + SHIFT + N",  -- a different key
+--     today   = false,                -- disabled
+--     -- inbox omitted -> keeps its default
+--   }
+--   dofile(...)
+--
+-- A key set to `false` is not bound. A key left out keeps the default below.
+--
+-- CHECK BEFORE YOU BIND. Hyprland accepts a second bind on a key already in
+-- use and the later one silently wins -- nothing warns, and `hyprctl
+-- configerrors` stays empty. The defaults here were moved off SUPER+SHIFT+W
+-- for exactly that reason: it was already Omawrite, and sourcing this file
+-- would have quietly taken it over.
 --
 --   hyprctl binds -j | jq -r '.[] | "\(.modmask) \(.key)  \(.description)"' | sort
 --
--- Modmasks: SUPER 64, ALT 8, CTRL 4, SHIFT 1 (so SUPER+ALT is 72).
+-- Modmasks: SUPER 64, ALT 8, CTRL 4, SHIFT 1 -- so SUPER+ALT is 72. Note that
+-- omarchy's own binds show as `dispatcher: __lua` with a numeric `arg` rather
+-- than the command, so match on the description, not the command name.
 
--- Capture. The one worth a global bind: the path from "I just thought of
--- something" to a todo under today's date without leaving the window you are
--- in. Opens the panel with the cursor already in the field.
-o.bind("SUPER + ALT + W", "Workflowy: capture a todo", "omarchy-shell omaflowy capture")
+local defaults = {
+  -- Capture on whichever tab the panel was left on, cursor in the field. The
+  -- one worth a global key: from "I just thought of something" to a todo under
+  -- today's date without leaving the window you are in.
+  capture = "SUPER + ALT + W",
+  -- Same landing, pinned to Today. Pressing either again while the cursor is
+  -- in the field dismisses the panel.
+  today   = "SUPER + ALT + T",
+  -- Inbox, focus left on the panel: triage rather than capture. Use
+  -- `omarchy-shell omaflowy captureIn inbox` instead to land in the field.
+  inbox   = "SUPER + ALT + I",
+}
 
--- Today, cursor in the field. Same landing as capture but pinned to Today.
--- Pressing it again while the cursor is in the field dismisses the panel.
-o.bind("SUPER + ALT + T", "Workflowy: today's todos", "omarchy-shell omaflowy captureIn today")
+local actions = {
+  capture = { "Workflowy: capture a todo",  "omarchy-shell omaflowy capture" },
+  today   = { "Workflowy: today's todos",   "omarchy-shell omaflowy captureIn today" },
+  inbox   = { "Workflowy: inbox",           "omarchy-shell omaflowy tab inbox" },
+}
 
--- Straight to the inbox, for triage rather than capture -- so `tab`, which
--- leaves focus on the panel. Swap to `captureIn inbox` to land in the field.
-o.bind("SUPER + ALT + I", "Workflowy: inbox", "omarchy-shell omaflowy tab inbox")
+local cfg = omaflowy_binds or {}
+
+for name, action in pairs(actions) do
+  -- nil means "not configured" and takes the default; false means "off".
+  -- They are distinct, which is why this is not `cfg[name] or defaults[name]`.
+  local key = cfg[name]
+  if key == nil then key = defaults[name] end
+  if key then o.bind(key, action[1], action[2]) end
+end
