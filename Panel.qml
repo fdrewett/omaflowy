@@ -326,57 +326,84 @@ Panel {
           width: flick.width
           spacing: Style.space(12)
 
-          PanelHero {
-            id: hero
+          // The header is assembled here rather than handed to PanelHero's
+          // `trailingControl`. That slot is a bare Loader with no explicit
+          // size, so a Row placed in it paints wider than it measures and the
+          // right-hand part of the last button stops taking clicks -- the ⋮
+          // was dead along its right edge. Anchoring the actions directly
+          // makes the hit area and the paint area the same rectangle.
+          Item {
+            id: header
             width: parent.width
-            title: "Workflowy"
-            meta: root.heroMeta
-            // `detail` is deliberately unset. PanelHero renders it as a pill
-            // inside the label column, which is inset by the trailing control
-            // -- so the date landed to the LEFT of the buttons with the
-            // buttons hanging off the edge beside it. Both live in the
-            // trailing slot instead, which is the only thing actually pinned
-            // to the hero's right edge.
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            metaOpacity: store.error !== "" ? 1.0 : 0.7
+            implicitHeight: Math.max(heroSlot.implicitHeight,
+                                     headerActions.implicitHeight)
 
-            trailingControl: Component {
-              Row {
-                spacing: Style.space(6)
+            Item {
+              id: heroSlot
+              anchors.left: parent.left
+              anchors.right: headerActions.left
+              anchors.rightMargin: Style.space(12)
+              anchors.verticalCenter: parent.verticalCenter
+              implicitHeight: hero.implicitHeight
 
-                BorderSurface {
-                  // Matches PanelHero's own detail pill, so the date reads the
-                  // same as it did before it moved.
-                  visible: store.label !== ""
-                  anchors.verticalCenter: parent.verticalCenter
-                  implicitWidth: dateText.implicitWidth + Style.space(10)
-                  implicitHeight: dateText.implicitHeight + Style.space(4)
-                  color: "transparent"
-                  borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
-                  radius: Style.cornerRadius
+              PanelHero {
+                id: hero
+                // `detail` is deliberately unset. PanelHero renders it as a
+                // pill inside the label column, and that column is inset by
+                // the trailing control -- so the date could never sit to the
+                // right of the buttons while it was passed as `detail`.
+                title: "Workflowy"
+                meta: root.heroMeta
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                metaOpacity: store.error !== "" ? 1.0 : 0.7
+              }
+            }
 
-                  Text {
-                    id: dateText
-                    anchors.centerIn: parent
-                    textFormat: Text.PlainText
-                    text: store.label
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
-                  }
+            Row {
+              id: headerActions
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              BorderSurface {
+                id: datePill
+                // Quieter than the button beside it on purpose: this is a
+                // label, and at full strength a bordered chip next to a
+                // bordered button reads as a second thing to click.
+                visible: store.label !== ""
+                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: dateText.implicitWidth + Style.space(10)
+                implicitHeight: dateText.implicitHeight + Style.space(4)
+                opacity: 0.55
+                color: "transparent"
+                borderSpec: Border.controlSpec("normal", root.dim, root.dim)
+                radius: Style.cornerRadius
+
+                Text {
+                  id: dateText
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: store.label
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
                 }
+              }
 
-                PanelActionButton {
-                  iconText: "󰇙"
-                  tooltipText: "More"
-                  bordered: true
-                  anchors.verticalCenter: parent.verticalCenter
-                  foreground: root.menuOpen || root.settingsOpen ? root.accent
-                                                                 : root.foreground
-                  onClicked: root.menuOpen = !root.menuOpen
-                }
+              PanelActionButton {
+                id: menuButton
+                iconText: "󰇙"
+                tooltipText: "More"
+                bordered: true
+                // Squared off to the date chip's height rather than the 22px
+                // default: it lines the two boxes up, and a 22px target for
+                // the panel's only menu is meaner than it needs to be.
+                size: Math.max(Style.space(22), datePill.implicitHeight)
+                anchors.verticalCenter: parent.verticalCenter
+                foreground: root.menuOpen || root.settingsOpen ? root.accent
+                                                               : root.foreground
+                onClicked: root.menuOpen = !root.menuOpen
               }
             }
           }
