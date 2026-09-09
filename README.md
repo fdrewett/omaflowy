@@ -77,7 +77,7 @@ what Workflowy itself does.
 
 Below today's list, the same thing Workflowy calls Found Dates: open items
 carrying a date pill for today that live somewhere else entirely. A line written
-under last Friday saying "check in with a colleague `[today]`" is work due
+under last Friday saying "chase the gate permit `[today]`" is work due
 today and is nowhere near today's bullets.
 
 Matching is on the `<time>` element's `startYear`/`startMonth`/`startDay`

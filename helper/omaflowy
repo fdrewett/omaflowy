@@ -187,7 +187,7 @@ def plain(name, drop_dates=False):
 
     `drop_dates` removes the pill entirely. Under a "dated today" heading the
     label is already implied, and leaving it in gives rows that read "check in
-    with a colleague Tue, Sep 8, 2026".
+    the gate permit Tue, Sep 8, 2026".
     """
     if not name:
         return ""
@@ -257,7 +257,7 @@ def found_dates(tree, day, day_id, exclude):
 
     This is Workflowy's own "Found Dates" list, and it is the half of a day
     that the day node does not contain: a note written under last Friday that
-    says "check in with a colleague [today]" is work due today and is
+    says "chase the gate permit [today]" is work due today and is
     nowhere near today's bullets.
 
     Two exclusions, both of which the app also makes and both of which showed
