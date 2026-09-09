@@ -6,29 +6,67 @@
   "author": "Frank Drewett",
   "license": "MIT",
   "description": "Today's open todos from Workflowy, in the bar. Click one to complete it, type to capture a new one.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "Panel.qml" },
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
   "barWidget": {
     "displayName": "Omaflowy",
-    "description": "Open Workflowy todos for today. Left: panel · Middle: refresh · Right: open today in Workflowy.",
+    "description": "Open Workflowy todos. Left: panel \u00b7 Middle: refresh \u00b7 Right: capture.",
     "category": "Productivity",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "refreshSec": 300,
       "openRefreshSec": 60,
-      "depth": 4,
+      "exportMaxAgeSec": 90,
       "excludePaths": "",
-      "showNotes": true,
       "hideWhenEmpty": false
     },
     "schema": [
-      { "key": "refreshSec", "type": "integer", "label": "Refresh interval, panel closed (seconds)", "min": 60, "max": 3600, "step": 30, "defaultValue": 300 },
-      { "key": "openRefreshSec", "type": "integer", "label": "Refresh interval, panel open (seconds)", "min": 15, "max": 600, "step": 15, "defaultValue": 60 },
-      { "key": "depth", "type": "integer", "label": "How deep to look under today", "min": 1, "max": 6, "step": 1, "defaultValue": 4, "description": "Each level costs API requests. 4 reaches day > section > person > item." },
-      { "key": "excludePaths", "type": "string", "label": "Skip subtrees named", "defaultValue": "", "description": "Comma-separated. Recurring templates stamp empty section headers into a day that would otherwise read as open work — name them here." },
-      { "key": "showNotes", "type": "boolean", "label": "Show today's other open bullets", "defaultValue": true },
-      { "key": "hideWhenEmpty", "type": "boolean", "label": "Hide the pill when nothing is open", "defaultValue": false }
+      {
+        "key": "refreshSec",
+        "type": "integer",
+        "label": "Refresh interval, panel closed (seconds)",
+        "min": 60,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 300
+      },
+      {
+        "key": "openRefreshSec",
+        "type": "integer",
+        "label": "Refresh interval, panel open (seconds)",
+        "min": 15,
+        "max": 600,
+        "step": 15,
+        "defaultValue": 60
+      },
+      {
+        "key": "exportMaxAgeSec",
+        "type": "integer",
+        "label": "All tab: cache lifetime (seconds)",
+        "min": 60,
+        "max": 900,
+        "step": 30,
+        "defaultValue": 90,
+        "description": "The All tab reads the whole-account export, which Workflowy limits to one request per minute. Below 60 the limit refuses and the cached list is shown instead."
+      },
+      {
+        "key": "excludePaths",
+        "type": "string",
+        "label": "Skip subtrees named",
+        "defaultValue": "",
+        "description": "Comma-separated. A recurring template can stamp a dozen empty section headers into a day; name its parent here to keep them out."
+      },
+      {
+        "key": "hideWhenEmpty",
+        "type": "boolean",
+        "label": "Hide the pill when today is clear",
+        "defaultValue": false
+      }
     ]
   }
 }

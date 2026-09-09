@@ -16,63 +16,123 @@ Panel {
   manageIpc: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color accent: Color.accent
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property bool showNotes: setting("showNotes", true)
-  readonly property bool hideWhenEmpty: setting("hideWhenEmpty", false)
-  readonly property var visibleNotes: showNotes ? store.notes : []
+  readonly property var sources: ["today", "inbox", "all"]
+  readonly property var sourceLabels: ["Today", "Inbox", "All"]
+  property int sourceIndex: 0
 
-  // The pill counts todos only. A leaf bullet under today is as often
-  // narrative ("dinner with the folks") as it is work, so counting those
-  // would put a number in the bar that does not mean anything.
-  readonly property int pillCount: store.todos.length
+  // The pill always counts today, whatever tab is showing. A bar number that
+  // changed because you clicked a tab would not be a number you could trust
+  // at a glance, which is the only thing a bar number is for.
+  property int todayCount: 0
+  property bool todayLoaded: false
+
   readonly property string pillText:
-    store.error !== "" ? "󰅚" : (store.everLoaded ? "󰄱 " + pillCount : "󰄱 ·")
+    store.error !== "" ? "󰅚" : (todayLoaded ? "󰄰 " + todayCount : "󰄰 ·")
 
   readonly property string heroMeta: {
     if (store.error !== "") return store.error
     if (!store.everLoaded) return "Loading…"
-    if (pillCount === 0 && visibleNotes.length === 0) return "Nothing open"
-    var parts = [pillCount + (pillCount === 1 ? " todo" : " todos")]
-    if (visibleNotes.length > 0) parts.push(visibleNotes.length + " other")
-    return parts.join(" · ")
+    var n = store.count
+    var noun = n === 1 ? " item" : " items"
+    return (n === 0 ? "Nothing open" : n + noun) + (store.stale ? " · cached" : "")
   }
 
-  function refresh() { store.refresh() }
+  function refresh() { store.refresh(); todayProbe.reload() }
 
-  function openInWorkflowy() {
-    // The day node is addressable by date in the API but not in a web URL, so
-    // this lands on the calendar rather than deep-linking to today.
-    if (bar) bar.run("xdg-open https://workflowy.com/#/")
+  Connections {
+    target: store
+    // Keep the pill in step without a second read when Today is on screen.
+    function onItemsChanged() {
+      if (root.sources[root.sourceIndex] !== "today") return
+      root.todayCount = store.count
+      root.todayLoaded = true
+    }
+  }
+
+  function selectSource(i) {
+    var next = Math.max(0, Math.min(i, sources.length - 1))
+    if (next === sourceIndex) return
+    sourceIndex = next
+    store.refresh()
+  }
+
+  function openNode(id) {
+    // Web URLs address a node by the last segment of its UUID -- the same
+    // 12-character short id the MCP server uses.
+    if (bar && id) bar.run("xdg-open 'https://workflowy.com/#/" + String(id).slice(-12) + "'")
+  }
+
+  function submitCapture() {
+    if (capture.text.trim() === "") return
+    // Capture follows the tab you are looking at: typing into the Inbox view
+    // and having the line land on today's date would be a quiet misfile.
+    store.add(capture.text, sources[sourceIndex] === "inbox" ? "inbox" : "today")
+    capture.text = ""
+  }
+
+  // Opens the panel with the cursor already in the field, for the global
+  // keybinding. Focus has to wait for the popup to actually exist.
+  function captureFocus() {
+    root.open()
+    Qt.callLater(function() { capture.forceActiveFocus() })
   }
 
   Store {
     id: store
-    depth: root.setting("depth", 4)
+    source: root.sources[root.sourceIndex]
+    maxAge: root.setting("exportMaxAgeSec", 90)
     exclude: root.setting("excludePaths", "")
+    onWriteFailed: function(message) { root.refresh() }
   }
 
-  Component.onCompleted: store.refresh()
+  // A second read of today that keeps the pill honest while another tab is
+  // open. It costs no request of its own: every source is served from the same
+  // cached export, so this only re-filters a file the store has already paid
+  // for. When Today is the visible tab the store's own result is authoritative
+  // and the probe stands down.
+  Process {
+    id: todayProbe
+    command: [store.helper, "list", "today", "--max-age",
+              String(root.setting("exportMaxAgeSec", 90))]
+             .concat(root.setting("excludePaths", "") !== ""
+                     ? ["--exclude", root.setting("excludePaths", "")] : [])
+    function reload() {
+      if (root.sources[root.sourceIndex] === "today") return
+      if (!running) running = true
+    }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(text)
+          if (d.ok) { root.todayCount = d.count; root.todayLoaded = true }
+        } catch (e) { /* the pill keeps its last honest value */ }
+      }
+    }
+  }
+
+  Component.onCompleted: root.refresh()
 
   Timer {
     // Two rates, the pattern harshith.system-monitor uses: a slow beat to keep
     // the pill honest, a faster one while someone is looking at the list.
-    interval: 1000 * (root.opened
-      ? root.setting("openRefreshSec", 60)
-      : root.setting("refreshSec", 300))
+    interval: 1000 * (root.opened ? root.setting("openRefreshSec", 60)
+                                  : root.setting("refreshSec", 300))
     running: true
     repeat: true
-    onTriggered: store.refresh()
+    onTriggered: root.refresh()
   }
 
   Connections {
     target: root
     // Opening should not show a stale list, but re-fetching on every toggle
-    // would hammer the API when the panel is being flicked open and shut.
+    // would burn requests while the panel is flicked open and shut.
     function onOpenedChanged() {
-      if (root.opened && Date.now() / 1000 - store.fetchedAt > 30) store.refresh()
+      if (root.opened && Date.now() / 1000 - store.fetchedAt > 30) root.refresh()
     }
   }
 
@@ -84,11 +144,23 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): string { root.refresh(); return "ok" }
-    function count(): string { return String(root.pillCount) }
+    function count(): string { return String(root.todayCount) }
+    function debug(): string {
+      return JSON.stringify({ err: store.error, loading: store.loading,
+                              n: store.count, at: store.fetchedAt,
+                              helper: store.helper, probe: root.todayLoaded })
+    }
+    // The global keybinding's entry point.
+    function capture(): string { root.captureFocus(); return "ok" }
+    // Capture without opening anything, for a bind that should not steal focus.
+    function add(text: string): string {
+      if (!text || text.trim() === "") return "empty"
+      store.add(text, "today")
+      return "ok"
+    }
   }
 
-  visible: !(root.hideWhenEmpty && store.everLoaded
-             && root.pillCount === 0 && root.visibleNotes.length === 0)
+  visible: !(root.setting("hideWhenEmpty", false) && root.todayLoaded && root.todayCount === 0)
   implicitWidth: visible ? button.implicitWidth : 0
   implicitHeight: button.implicitHeight
 
@@ -101,7 +173,7 @@ Panel {
     tooltipText: store.error !== "" ? store.error : "Workflowy — today"
 
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) root.openInWorkflowy()
+      if (buttonCode === Qt.RightButton) root.captureFocus()
       else if (buttonCode === Qt.MiddleButton) root.refresh()
       else root.toggle()
     }
@@ -114,14 +186,14 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: popup.fittedContentWidth(Style.space(400))
-    contentHeight: popup.fittedContentHeight(column.implicitHeight, Style.space(560))
+    contentWidth: popup.fittedContentWidth(Style.space(420))
+    contentHeight: popup.fittedContentHeight(column.implicitHeight, Style.space(600))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       // The capture field wants every keystroke it can get, so the catcher
-      // stands down while it has focus — otherwise typing "r" in a todo would
+      // stands down while it has focus -- otherwise typing "r" in a todo would
       // fire the refresh shortcut instead of landing in the text.
       blocked: capture.activeFocus
       onCloseRequested: root.close()
@@ -129,6 +201,9 @@ Panel {
       onTextKey: function(t) {
         if (t === "r" || t === "R") root.refresh()
         else if (t === "n" || t === "N") capture.forceActiveFocus()
+        else if (t === "1") root.selectSource(0)
+        else if (t === "2") root.selectSource(1)
+        else if (t === "3") root.selectSource(2)
       }
 
       Flickable {
@@ -149,9 +224,9 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: "Today"
+            title: "Workflowy"
             meta: root.heroMeta
-            detail: store.date
+            detail: store.label
             foreground: root.foreground
             fontFamily: root.fontFamily
             metaOpacity: store.error !== "" ? 1.0 : 0.7
@@ -168,90 +243,69 @@ Panel {
             }
           }
 
-          TextField {
-            id: capture
+          Row {
             width: parent.width
-            placeholderText: "New todo…"
-            foreground: root.foreground
-            onAccepted: {
-              if (text.trim() === "") return
-              store.add(text)
-              text = ""
+            spacing: Style.space(8)
+
+            TextField {
+              id: capture
+              width: parent.width - addButton.width - Style.space(8)
+              placeholderText: root.sources[root.sourceIndex] === "inbox"
+                ? "New item in Inbox…" : "New todo for today…"
+              foreground: root.foreground
+              onAccepted: root.submitCapture()
             }
-          }
 
-          PanelSeparator {
-            visible: store.todos.length > 0
-            foreground: root.foreground
-          }
-
-          Column {
-            visible: store.todos.length > 0
-            width: parent.width
-            spacing: Style.space(10)
-
-            PanelSectionHeader {
-              text: "OPEN"
+            Button {
+              id: addButton
+              text: "Add"
+              bordered: true
+              enabled: capture.text.trim() !== ""
+              opacity: enabled ? 1.0 : 0.4
               foreground: root.foreground
               fontFamily: root.fontFamily
-            }
-
-            Column {
-              id: todoColumn
-              width: parent.width
-              spacing: Style.space(4)
-
-              Repeater {
-                model: store.todos
-                ItemRow {
-                  required property var modelData
-                  width: todoColumn.width
-                  item: modelData
-                  isTodo: true
-                }
-              }
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: root.submitCapture()
             }
           }
 
-          PanelSeparator {
-            visible: root.visibleNotes.length > 0
+          ButtonGroup {
+            width: parent.width
+            options: root.sourceLabels
+            // ButtonGroup speaks in labels, not indices, so the selected tab
+            // round-trips through sourceLabels rather than being tracked twice.
+            value: root.sourceLabels[root.sourceIndex]
             foreground: root.foreground
+            fontFamily: root.fontFamily
+            onChanged: function(value) {
+              root.selectSource(root.sourceLabels.indexOf(value))
+            }
           }
+
+          PanelSeparator { foreground: root.foreground }
 
           Column {
-            visible: root.visibleNotes.length > 0
+            id: itemColumn
             width: parent.width
-            spacing: Style.space(10)
+            spacing: Style.space(4)
 
-            PanelSectionHeader {
-              text: "FROM TODAY'S NOTES"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              id: noteColumn
-              width: parent.width
-              spacing: Style.space(4)
-
-              Repeater {
-                model: root.visibleNotes
-                ItemRow {
-                  required property var modelData
-                  width: noteColumn.width
-                  item: modelData
-                  isTodo: false
-                }
+            Repeater {
+              model: store.visibleItems
+              ItemRow {
+                required property var modelData
+                width: itemColumn.width
+                item: modelData
               }
             }
           }
 
           Text {
-            visible: store.everLoaded && store.error === ""
-                     && store.todos.length === 0 && root.visibleNotes.length === 0
+            visible: store.everLoaded && store.error === "" && store.count === 0
             width: parent.width
             textFormat: Text.PlainText
-            text: "Nothing open under today. Type above to add the first one."
+            text: root.sources[root.sourceIndex] === "all"
+              ? "No open todos anywhere."
+              : "Nothing open. Type above to add the first one."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -265,17 +319,12 @@ Panel {
   component ItemRow: CursorSurface {
     id: row
     required property var item
-    required property bool isTodo
-
-    readonly property bool busy: store.isPending(row.item.id)
 
     foreground: root.foreground
     implicitHeight: rowText.implicitHeight + Style.space(10)
-    opacity: busy ? 0.35 : 1.0
-
-    Behavior on opacity { NumberAnimation { duration: 120 } }
 
     Row {
+      id: rowLayout
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
@@ -283,26 +332,36 @@ Panel {
       anchors.rightMargin: Style.space(8)
       spacing: Style.space(8)
 
-      Text {
-        // A todo gets a real box; a plain bullet gets a dot, so the two lists
-        // stay distinguishable after they scroll apart from their headers.
-        text: row.isTodo ? "󰄱" : "·"
-        color: row.isTodo ? root.foreground : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        anchors.verticalCenter: parent.verticalCenter
+      PanelActionButton {
+        id: completeButton
+        iconText: hovered ? "󰄲" : "󰄰"
+        tooltipText: "Complete"
+        foreground: hovered ? root.accent : root.foreground
+        fontSize: Style.font.body
+        // Aligned to the first line rather than the block's centre: a wrapped
+        // two-line todo with its path underneath left the control floating
+        // beside the second line, reading as though it belonged elsewhere.
+        anchors.top: parent.top
+        anchors.topMargin: Math.max(0, (rowText.firstLineHeight - height) / 2)
+        property bool hovered: false
+        onHovered: function(on) { hovered = on }
+        onClicked: store.complete(row.item.id)
       }
 
       Column {
         id: rowText
-        width: parent.width - Style.space(24)
+        width: rowLayout.width - completeButton.width - openButton.width - Style.space(16)
         spacing: Style.space(2)
 
+        readonly property real firstLineHeight:
+          label.lineCount > 0 ? label.implicitHeight / label.lineCount : label.implicitHeight
+
         Text {
+          id: label
           width: parent.width
           textFormat: Text.PlainText
           text: row.item.text
-          color: row.isTodo ? root.foreground : root.dim
+          color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           wrapMode: Text.WordWrap
@@ -311,9 +370,9 @@ Panel {
         }
 
         Text {
-          // Where it sits under today. Without it "Cancel the trial" and
-          // "start the team check-ins" read as free-floating orders with no
-          // clue which client or section they belong to.
+          // Where it sits in the tree. Without it "start the team check-ins"
+          // reads as a free-floating order with no clue which client or
+          // section it belongs to -- and in the All view, no clue which day.
           visible: String(row.item.path || "") !== ""
           width: parent.width
           textFormat: Text.PlainText
@@ -325,21 +384,35 @@ Panel {
           opacity: 0.75
         }
       }
+
+      PanelActionButton {
+        id: openButton
+        iconText: "󰏌"
+        tooltipText: "Open in Workflowy"
+        foreground: root.foreground
+        fontSize: Style.font.body
+        opacity: row.hasCursor ? 1.0 : 0.0
+        anchors.top: parent.top
+        anchors.topMargin: Math.max(0, (rowText.firstLineHeight - height) / 2)
+        Behavior on opacity { NumberAnimation { duration: 100 } }
+        onClicked: root.openNode(row.item.id)
+      }
     }
 
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      enabled: !row.busy
+      // Below the buttons, not over them: this only tracks hover so the open
+      // control can fade in. Clicking the row itself does nothing on purpose --
+      // completing is destructive enough to want an explicit target.
+      acceptedButtons: Qt.NoButton
       onEntered: row.hasCursor = true
       onExited: row.hasCursor = false
-      onClicked: store.complete(row.item.id)
     }
 
     PanelToolTip {
-      visible: row.hasCursor
-      text: row.item.note !== "" ? row.item.note : "Click to complete"
+      visible: row.hasCursor && row.item.note !== ""
+      text: row.item.note
       fontFamily: root.fontFamily
     }
   }
