@@ -334,7 +334,7 @@ Panel {
 
       PanelActionButton {
         id: completeButton
-        iconText: hovered ? "󰄲" : "󰄰"
+        iconText: hovered ? "\udb80\udd32" : "\udb80\udd30"
         tooltipText: "Complete"
         foreground: hovered ? root.accent : root.foreground
         fontSize: Style.font.body
@@ -348,71 +348,66 @@ Panel {
         onClicked: store.complete(row.item.id)
       }
 
-      Column {
-        id: rowText
-        width: rowLayout.width - completeButton.width - openButton.width - Style.space(16)
-        spacing: Style.space(2)
+      // Two targets, each doing the obvious thing: the circle ticks it off,
+      // the words take you to it. A row-wide click that completed would put
+      // the destructive action under the cursor everywhere, which is the wrong
+      // default for a list you mostly scan.
+      Item {
+        width: rowLayout.width - completeButton.width - Style.space(8)
+        implicitHeight: rowText.implicitHeight
 
-        readonly property real firstLineHeight:
-          label.lineCount > 0 ? label.implicitHeight / label.lineCount : label.implicitHeight
-
-        Text {
-          id: label
+        Column {
+          id: rowText
           width: parent.width
-          textFormat: Text.PlainText
-          text: row.item.text
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          wrapMode: Text.WordWrap
-          maximumLineCount: 3
-          elide: Text.ElideRight
+          spacing: Style.space(2)
+
+          readonly property real firstLineHeight:
+            label.lineCount > 0 ? label.implicitHeight / label.lineCount
+                                : label.implicitHeight
+
+          Text {
+            id: label
+            width: parent.width
+            textFormat: Text.PlainText
+            text: row.item.text
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+            maximumLineCount: 3
+            elide: Text.ElideRight
+          }
+
+          Text {
+            // Where it sits in the tree. Without it "start the team check-ins"
+            // reads as a free-floating order with no clue which client or
+            // section it belongs to -- and in the All view, no clue which day.
+            visible: String(row.item.path || "") !== ""
+            width: parent.width
+            textFormat: Text.PlainText
+            text: row.item.path
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+            opacity: 0.75
+          }
         }
 
-        Text {
-          // Where it sits in the tree. Without it "start the team check-ins"
-          // reads as a free-floating order with no clue which client or
-          // section it belongs to -- and in the All view, no clue which day.
-          visible: String(row.item.path || "") !== ""
-          width: parent.width
-          textFormat: Text.PlainText
-          text: row.item.path
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-          opacity: 0.75
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onEntered: row.hasCursor = true
+          onExited: row.hasCursor = false
+          onClicked: root.openNode(row.item.id)
         }
       }
-
-      PanelActionButton {
-        id: openButton
-        iconText: "󰏌"
-        tooltipText: "Open in Workflowy"
-        foreground: root.foreground
-        fontSize: Style.font.body
-        opacity: row.hasCursor ? 1.0 : 0.0
-        anchors.top: parent.top
-        anchors.topMargin: Math.max(0, (rowText.firstLineHeight - height) / 2)
-        Behavior on opacity { NumberAnimation { duration: 100 } }
-        onClicked: root.openNode(row.item.id)
-      }
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      // Below the buttons, not over them: this only tracks hover so the open
-      // control can fade in. Clicking the row itself does nothing on purpose --
-      // completing is destructive enough to want an explicit target.
-      acceptedButtons: Qt.NoButton
-      onEntered: row.hasCursor = true
-      onExited: row.hasCursor = false
     }
 
     PanelToolTip {
-      visible: row.hasCursor && row.item.note !== ""
-      text: row.item.note
+      visible: row.hasCursor
+      text: row.item.note !== "" ? row.item.note : "Open in Workflowy"
       fontFamily: root.fontFamily
     }
   }
