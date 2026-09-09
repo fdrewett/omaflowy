@@ -30,22 +30,33 @@ omarchy plugin add https://github.com/fdrewett/omaflowy.git --enable --yes
 A **Workflowy personal API token** — no OAuth, no account linking, no server in
 the middle. Get one at <https://workflowy.com/api-key/>.
 
-The token is read **at runtime** from `~/.workflowy/config.json`, the file the
-[`wf` CLI](https://github.com/malcolmocean/workflowy-cli) already owns:
+Two ways to provide it, checked in this order:
 
-```json
-{ "activeAccount": "default", "accounts": { "default": { "token": "…" } } }
-```
+1. **The settings panel** — the cog beside Refresh has a token field. It
+   verifies the token against Workflowy before saving it to
+   `~/.config/omaflowy/token`, created `0600`. Nothing else to install.
+2. **The [`wf` CLI](https://github.com/malcolmocean/workflowy-cli)'s config** at
+   `~/.workflowy/config.json`, used as a fallback so an existing `wf` setup
+   needs no configuration at all:
 
-Nothing is stored in this repo, in `shell.json`, or anywhere the plugin writes.
-Specifically:
+   ```json
+   { "activeAccount": "default", "accounts": { "default": { "token": "…" } } }
+   ```
+
+The panel's own file wins when both exist: someone who has just typed a token
+into the panel means that one.
+
+Nothing is stored in this repo or in `shell.json`. Specifically:
 
 - The token is used **only** as an `Authorization: Bearer` header to
   `workflowy.com`. That is the sole outbound host — there is no telemetry and
   no third party.
 - It is **never passed as a command-line argument**, so it does not appear in
-  `ps` output to other users on the machine. The QML side never sees it at all;
-  it hands the helper node ids and text, and the helper adds the header.
+  `ps` output to other users on the machine. That holds when saving it too: the
+  settings panel writes it to the helper's **stdin**, the same way
+  `omarchy.network` hands over a wifi password. The QML side otherwise never
+  sees it; it hands the helper node ids and text, and the helper adds the
+  header.
 - It is never logged. The `debug` IPC method reports counts and panel state
   only, never content or credentials.
 

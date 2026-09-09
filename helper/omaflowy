@@ -40,6 +40,10 @@ class FetchError(RuntimeError):
 
 
 BASE = "https://workflowy.com/api/v1"
+# Omaflowy's own token file, written by the settings panel.
+TOKEN_FILE = os.path.expanduser("~/.config/omaflowy/token")
+# The `wf` CLI's config, the fallback so existing setups need no work.
+WF_CONFIG = os.path.expanduser("~/.workflowy/config.json")
 BINDS_FILE = os.path.expanduser("~/.config/omaflowy/binds.lua")
 BIND_ACTIONS = ("capture", "today", "inbox")
 BIND_DEFAULTS = {"capture": "SUPER + ALT + W",
@@ -50,7 +54,6 @@ BIND_LABELS = {"capture": "Capture",
                "inbox":   "Open Inbox"}
 MODBITS = {"SHIFT": 1, "CAPS": 2, "CTRL": 4, "CONTROL": 4, "ALT": 8,
            "MOD2": 16, "MOD3": 32, "SUPER": 64, "MOD5": 128}
-CONFIG = os.path.expanduser("~/.workflowy/config.json")
 CACHE_DIR = os.path.expanduser("~/.cache/omaflowy")
 EXPORT_CACHE = os.path.join(CACHE_DIR, "export.json")
 LOCK_FILE = os.path.join(CACHE_DIR, "export.lock")
@@ -62,9 +65,39 @@ TIMEOUT = 45
 # --------------------------------------------------------------------------
 
 def token():
-    with open(CONFIG) as fh:
+    """The API token, from Omaflowy's own file or the `wf` CLI's config.
+
+    Omaflowy's file wins because it is what the settings panel writes: someone
+    who has just typed a token into the panel means that one, even if a stale
+    `wf` config is also on disk. Falling back to `wf` keeps existing setups
+    working with nothing to configure.
+    """
+    try:
+        with open(TOKEN_FILE) as fh:
+            t = fh.read().strip()
+        if t:
+            return t
+    except OSError:
+        pass
+    with open(WF_CONFIG) as fh:
         d = json.load(fh)
     return d["accounts"][d.get("activeAccount") or "default"]["token"]
+
+
+def token_source():
+    try:
+        if open(TOKEN_FILE).read().strip():
+            return TOKEN_FILE
+    except OSError:
+        pass
+    try:
+        with open(WF_CONFIG) as fh:
+            d = json.load(fh)
+        if d["accounts"][d.get("activeAccount") or "default"]["token"]:
+            return WF_CONFIG
+    except (OSError, KeyError, ValueError):
+        pass
+    return None
 
 
 def _req(method, path, payload=None, **params):
@@ -364,8 +397,8 @@ def envelope(source, label, items, stale, found=None):
 
 def config_error(e):
     if isinstance(e, FileNotFoundError):
-        return "no ~/.workflowy/config.json — run `wf` to log in"
-    return "no token in ~/.workflowy/config.json"
+        return "No API token. Open settings (the cog) and paste one."
+    return "No API token. Open settings (the cog) and paste one."
 
 
 def cmd_list(args):
@@ -570,6 +603,71 @@ def hypr_conflicts(binds):
     return out
 
 
+# --------------------------------------------------------------------------
+# auth
+# --------------------------------------------------------------------------
+
+def cmd_auth(args):
+    if args.op == "status":
+        src = token_source()
+        hint = ""
+        if src:
+            try:
+                t = token()
+                # Enough to recognise which token is in use, not enough to use.
+                hint = (t[:4] + "…" + t[-4:]) if len(t) > 12 else "…"
+            except Exception:
+                src = None
+        return {"ok": True, "configured": bool(src), "source": src or "",
+                "own": src == TOKEN_FILE, "hint": hint,
+                "wfConfig": WF_CONFIG, "tokenFile": TOKEN_FILE}
+
+    if args.op == "clear":
+        try:
+            os.remove(TOKEN_FILE)
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                return {"ok": False, "error": str(e)}
+        return {"ok": True, "cleared": True}
+
+    # set: the token arrives on STDIN, never argv -- an argument would be
+    # visible to every other user on the machine via `ps`. This mirrors what
+    # omarchy.network does for wifi passwords.
+    raw = sys.stdin.read().strip()
+    if not raw:
+        return {"ok": False, "error": "no token received"}
+    if len(raw) < 20 or " " in raw:
+        return {"ok": False, "error": "that does not look like a Workflowy API token"}
+
+    # Prove it works before storing it, so a typo surfaces here rather than as
+    # a broken widget later.
+    req = urllib.request.Request(BASE + "/targets", headers={
+        "Authorization": "Bearer " + raw, "Accept": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=TIMEOUT).read()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return {"ok": False, "error": "Workflowy rejected that token"}
+        return {"ok": False, "error": "could not verify: HTTP %s" % e.code}
+    except Exception as e:
+        return {"ok": False, "error": "could not reach Workflowy: %s" % str(e)[:80]}
+
+    os.makedirs(os.path.dirname(TOKEN_FILE), mode=0o700, exist_ok=True)
+    try:
+        os.chmod(os.path.dirname(TOKEN_FILE), 0o700)
+    except OSError:
+        pass
+    # Opened 0600 at creation: a default-mode create followed by a chmod leaves
+    # the credential world-readable in between.
+    tmp = TOKEN_FILE + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(raw + "\n")
+    os.replace(tmp, TOKEN_FILE)
+    invalidate()                       # the cache belongs to the old account
+    return {"ok": True, "source": TOKEN_FILE}
+
+
 def cmd_binds(args):
     if args.op == "read":
         binds = read_binds()
@@ -617,6 +715,10 @@ def main():
     c = sub.add_parser("complete")
     c.add_argument("node_id")
     c.set_defaults(fn=cmd_complete)
+
+    au = sub.add_parser("auth")
+    au.add_argument("op", choices=["status", "set", "clear"])
+    au.set_defaults(fn=cmd_auth)
 
     bd = sub.add_parser("binds")
     bd.add_argument("op", choices=["read", "write"])

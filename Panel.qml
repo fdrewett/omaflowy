@@ -37,6 +37,7 @@ Panel {
   function toggleSettings() {
     settingsOpen = !settingsOpen
     if (settingsOpen && !store.bindsLoaded) store.loadBinds()
+    if (settingsOpen && !store.authLoaded) store.loadAuth()
   }
 
   // The pill always counts today, whatever tab is showing. A bar number that
@@ -54,6 +55,7 @@ Panel {
     store.error !== "" ? "󰅚" : (todayLoaded ? "󰄰 " + todayCount : "󰄰 ·")
 
   readonly property string heroMeta: {
+    if (store.authLoaded && !store.authConfigured) return "No API token — open settings"
     if (store.error !== "") return store.error
     if (!store.everLoaded) return "Loading…"
     var n = store.count
@@ -187,7 +189,7 @@ Panel {
     }
   }
 
-  Component.onCompleted: root.refresh()
+  Component.onCompleted: { root.refresh(); store.loadAuth() }
 
   Timer {
     // Two rates, the pattern harshith.system-monitor uses: a slow beat to keep
@@ -447,6 +449,101 @@ Panel {
             visible: root.settingsOpen
             width: parent.width
             spacing: Style.space(10)
+
+            PanelSectionHeader {
+              text: "WORKFLOWY ACCOUNT"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: {
+                if (!store.authLoaded) return "Checking…"
+                if (!store.authConfigured)
+                  return "No API token found. Paste one below — get it from "
+                       + "workflowy.com/api-key"
+                return (store.authOwn ? "Using the token saved here"
+                                      : "Using the wf CLI's token")
+                       + " (" + store.authHint + ")"
+              }
+              color: store.authLoaded && !store.authConfigured ? root.urgent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              TextField {
+                id: tokenField
+                width: parent.width - saveToken.width
+                        - (forgetToken.visible ? forgetToken.width + Style.space(8) : 0)
+                        - Style.space(8)
+                // Masked: the panel can be open on a shared screen, and there
+                // is never a reason to read a token back off it.
+                password: true
+                placeholderText: store.authConfigured ? "Replace the token…"
+                                                      : "Paste your API token…"
+                foreground: root.foreground
+                onAccepted: { store.setToken(text); text = "" }
+              }
+
+              Button {
+                id: saveToken
+                text: "Save"
+                bordered: true
+                enabled: tokenField.text.trim() !== "" && !store.authSaving
+                opacity: enabled ? 1.0 : 0.4
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: { store.setToken(tokenField.text); tokenField.text = "" }
+              }
+
+              Button {
+                id: forgetToken
+                text: "Forget"
+                bordered: true
+                // Only when Omaflowy holds its own copy: with the wf CLI's
+                // token there is nothing here to forget, and offering it would
+                // imply this panel can revoke someone else's config.
+                visible: store.authOwn
+                enabled: !store.authSaving
+                foreground: root.urgent
+                fontFamily: root.fontFamily
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: store.clearToken()
+              }
+            }
+
+            Text {
+              visible: store.authError !== ""
+              width: parent.width
+              textFormat: Text.PlainText
+              text: store.authError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Verified with Workflowy before it is saved, to "
+                    + "~/.config/omaflowy/token, readable only by you."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              opacity: 0.8
+            }
+
+            PanelSeparator { foreground: root.foreground }
 
             PanelSectionHeader {
               text: "KEYBOARD SHORTCUTS"

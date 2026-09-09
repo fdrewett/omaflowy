@@ -51,6 +51,41 @@ Item {
 
   signal writeFailed(string message)
 
+  // --- auth --------------------------------------------------------------
+  property bool authConfigured: false
+  property bool authOwn: false
+  property string authSource: ""
+  property string authHint: ""
+  property string authError: ""
+  property bool authSaving: false
+  property bool authLoaded: false
+
+  function loadAuth() {
+    authProc.command = [helper, "auth", "status"]
+    authProc.running = true
+  }
+
+  function clearToken() {
+    if (authSaving) return
+    authSaving = true
+    authError = ""
+    authProc.command = [helper, "auth", "clear"]
+    authProc.running = true
+  }
+
+  // The token goes over STDIN, never argv -- an argument is visible to every
+  // other user on the machine through `ps`. Same pattern omarchy.network uses
+  // for wifi passwords.
+  function setToken(value) {
+    var t = String(value || "").trim()
+    if (t === "" || authSaving) return
+    authSaving = true
+    authError = ""
+    tokenProc.secret = t
+    tokenProc.command = [helper, "auth", "set"]
+    tokenProc.running = true
+  }
+
   // --- keybindings -------------------------------------------------------
   // Entirely local: reads and writes ~/.config/omaflowy/binds.lua and asks
   // Hyprland to reload. No network, and nothing here touches Workflowy.
@@ -156,6 +191,58 @@ Item {
       root.loading = false
       if (code !== 0 && root.error === "") root.error = "helper exited " + code
     }
+  }
+
+  Process {
+    id: authProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.authSaving = false
+        var d = null
+        try { d = JSON.parse(text) } catch (e) { d = null }
+        if (!d || d.ok !== true) {
+          root.authError = d && d.error ? d.error : "could not read the token setting"
+          return
+        }
+        root.authError = ""
+        if ("configured" in d) {
+          root.authConfigured = d.configured === true
+          root.authOwn = d.own === true
+          root.authSource = d.source || ""
+          root.authHint = d.hint || ""
+          root.authLoaded = true
+        } else {
+          root.loadAuth()          // a clear/set reply: re-read the real state
+          root.refresh()
+        }
+      }
+    }
+    onExited: function(code, status) { root.authSaving = false }
+  }
+
+  Process {
+    id: tokenProc
+    property string secret: ""
+    stdinEnabled: true
+    onStarted: {
+      write(secret + "\n")
+      secret = ""                  // do not keep it in a QML property
+    }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.authSaving = false
+        var d = null
+        try { d = JSON.parse(text) } catch (e) { d = null }
+        if (!d || d.ok !== true) {
+          root.authError = d && d.error ? d.error : "could not save the token"
+          return
+        }
+        root.authError = ""
+        root.loadAuth()
+        root.refresh()
+      }
+    }
+    onExited: function(code, status) { root.authSaving = false }
   }
 
   Process {
