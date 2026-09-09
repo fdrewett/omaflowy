@@ -94,10 +94,51 @@ Panel {
   }
 
   // Opens the panel with the cursor already in the field, for the global
-  // keybinding. Focus has to wait for the popup to actually exist.
-  function captureFocus() {
+  // keybindings. Selecting the tab first means the placeholder, and the list
+  // the text will be filed to, are already right when the cursor lands.
+  //
+  // Focus is asserted on a short retry rather than once, because a single
+  // Qt.callLater loses a race it cannot see: KeyboardPanel drives focus to its
+  // own key catcher while the popup is opening, and switching tabs adds a
+  // fetch and a relayout on top. Firing once happened to work from the
+  // already-correct tab and silently did nothing whenever the tab changed.
+  function captureFocus(tabName) {
+    var i = tabName ? root.sources.indexOf(String(tabName).toLowerCase()) : -1
+    // Pressing the same bind again, already in the field, dismisses. Without
+    // this the second press is a coin flip: re-asserting focus the field
+    // already holds makes the panel treat it as focus lost and close anyway,
+    // so the behaviour existed regardless -- this just makes it deliberate.
+    if (root.opened && capture.activeFocus && (i < 0 || i === sourceIndex)) {
+      root.close()
+      return
+    }
+    if (i >= 0) root.selectSource(i)
     root.open()
-    Qt.callLater(function() { capture.forceActiveFocus() })
+    _focusTries = 0
+    focusTimer.restart()
+  }
+
+  property int _focusTries: 0
+
+  Timer {
+    id: focusTimer
+    interval: 60
+    repeat: true
+    onTriggered: {
+      // Stop on success, on the panel being gone, or after ~0.8s.
+      //
+      // Do NOT reissue open() from in here when the panel reads closed. That
+      // was tried: an open during the closing animation is swallowed, so the
+      // retry reopens, the field grabs focus off the panel's key catcher, the
+      // panel treats that as focus lost and closes, and the two chase each
+      // other until the budget runs out. Losing a keypress issued mid-close is
+      // the smaller problem, and it fixes itself on the next press.
+      if (!root.opened || capture.activeFocus || ++root._focusTries > 13) {
+        stop()
+        return
+      }
+      capture.forceActiveFocus()
+    }
   }
 
   Store {
@@ -165,11 +206,23 @@ Panel {
     function count(): string { return String(root.todayCount) }
     function debug(): string {
       return JSON.stringify({ err: store.error, loading: store.loading,
-                              n: store.count, at: store.fetchedAt,
-                              helper: store.helper, probe: root.todayLoaded })
+                              n: store.count, found: store.visibleFound.length,
+                              at: store.fetchedAt, tab: root.sources[root.sourceIndex],
+                              opened: root.opened, fieldFocus: capture.activeFocus,
+                              probe: root.todayLoaded })
     }
     // The global keybinding's entry points.
-    function capture(): string { root.captureFocus(); return "ok" }
+    // Open + focus the field, on whichever tab is showing.
+    function capture(): string { root.captureFocus(""); return "ok" }
+    // Open + select a tab + focus the field. Separate from `tab` because
+    // browsing and capturing are different intents: landing in the field means
+    // the panel's single-key shortcuts are swallowed by the text box.
+    function captureIn(name: string): string {
+      if (root.sources.indexOf(String(name || "").toLowerCase()) < 0) return "unknown tab"
+      root.captureFocus(name)
+      return "ok"
+    }
+    // Open + select a tab, leaving focus on the panel.
     function tab(name: string): string {
       var i = root.sources.indexOf(String(name || "").toLowerCase())
       if (i < 0) return "unknown tab"

@@ -20,8 +20,10 @@
 -- in. Opens the panel with the cursor already in the field.
 o.bind("SUPER + ALT + W", "Workflowy: capture a todo", "omarchy-shell omaflowy capture")
 
--- Today's list, without the field grabbing focus.
-o.bind("SUPER + ALT + T", "Workflowy: today's todos", "omarchy-shell omaflowy tab today")
+-- Today, cursor in the field. Same landing as capture but pinned to Today.
+-- Pressing it again while the cursor is in the field dismisses the panel.
+o.bind("SUPER + ALT + T", "Workflowy: today's todos", "omarchy-shell omaflowy captureIn today")
 
--- Straight to the inbox. `tab` opens the panel and selects: today | inbox | all.
+-- Straight to the inbox, for triage rather than capture -- so `tab`, which
+-- leaves focus on the panel. Swap to `captureIn inbox` to land in the field.
 o.bind("SUPER + ALT + I", "Workflowy: inbox", "omarchy-shell omaflowy tab inbox")

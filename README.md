@@ -43,9 +43,15 @@ Nothing loads a plugin's Hyprland config automatically. Add one line to
 dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/frank.omaflowy/hypr/omaflowy.lua")
 ```
 
-That gives you `SUPER + ALT + W` (capture, cursor in the field),
-`SUPER + ALT + T` (today's list) and `SUPER + ALT + I` (Inbox). Edit
-[`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your own.
+| Bind | Does |
+|---|---|
+| `SUPER + ALT + W` | open on the current tab, cursor in the field |
+| `SUPER + ALT + T` | open on **Today**, cursor in the field |
+| `SUPER + ALT + I` | open on **Inbox**, focus left on the panel |
+
+The two capture binds toggle: pressing again while the cursor is in the field
+dismisses the panel. Edit [`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your
+own keys.
 
 > Check before you rebind. Hyprland accepts a second bind on a key already in
 > use and the later one **silently wins** — `SUPER + SHIFT + W` was the first
@@ -125,6 +131,23 @@ replace.
 stamps a block of section headers into every day, name its parent here and they
 stop competing with real work.
 
+## Focus, and a race worth knowing about
+
+`captureIn` selects a tab, opens the panel and puts the cursor in the capture
+field. Focus is asserted on a short retry rather than once, because a single
+`Qt.callLater` loses a race it cannot see: `KeyboardPanel` drives focus to its
+own key catcher while the popup opens, and switching tabs adds a fetch and a
+relayout on top. Firing once happened to work from the already-correct tab and
+silently did nothing whenever the tab changed — the bind looked wired and did
+half its job.
+
+The retry deliberately gives up when the panel reads closed rather than
+reopening it. Reopening was tried: an `open()` during the closing animation is
+swallowed, so the retry reopens, the field takes focus off the key catcher, the
+panel treats that as focus lost and closes, and the two chase each other until
+the budget runs out. Losing a keypress issued mid-close is the smaller problem
+and it fixes itself on the next press.
+
 ## Envelope keys
 
 Three endpoints, three conventions, none of them documented — verified
@@ -176,7 +199,8 @@ noticed.
 ./dev.sh --soft   # rescanPlugins instead of a restart
 omarchy plugin validate .
 omarchy-shell omaflowy debug     # store state: error, count, last fetch
-omarchy-shell omaflowy tab inbox # open the panel on a tab (today|inbox|all)
+omarchy-shell omaflowy tab inbox       # open on a tab (today|inbox|all)
+omarchy-shell omaflowy captureIn today # open on a tab, cursor in the field
 ```
 
 `dev.sh` restarts the shell by default, and that is deliberate.
