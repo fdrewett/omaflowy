@@ -19,24 +19,30 @@ Item {
   property string exclude: ""
 
   property var items: []
+  // Items dated today that live elsewhere in the tree -- Workflowy's own
+  // "Found Dates". Only ever populated for the "today" source.
+  property var found: []
   property string label: ""
   property bool loading: false
   property bool stale: false
   property string error: ""
   property double fetchedAt: 0
 
-  // Ids completed locally but not yet absent from a fetch. The `all` source is
-  // served from an export capped at one request per minute, so a refresh right
-  // after a click can legitimately return the row still open. Without this the
-  // item would reappear under the cursor and invite a second click.
-  property var completedIds: ({})
+  // Ids acted on locally but not yet absent from a fetch. Reads are served
+  // from an export capped at one request per minute, so a refresh right after
+  // a click can legitimately return the row unchanged. Without this the item
+  // would reappear under the cursor and invite a second click.
+  property var hiddenIds: ({})
 
-  readonly property var visibleItems: {
+  function _visible(list) {
     var out = []
-    for (var i = 0; i < items.length; i++)
-      if (!completedIds[items[i].id]) out.push(items[i])
+    for (var i = 0; i < list.length; i++)
+      if (!hiddenIds[list[i].id]) out.push(list[i])
     return out
   }
+
+  readonly property var visibleItems: _visible(items)
+  readonly property var visibleFound: _visible(found)
   readonly property int count: visibleItems.length
   readonly property bool everLoaded: fetchedAt > 0
 
@@ -54,15 +60,29 @@ Item {
     fetchProc.running = true
   }
 
-  function isCompleted(id) { return completedIds[id] === true }
+  function isHidden(id) { return hiddenIds[id] === true }
+
+  function _hide(id) {
+    var next = {}
+    for (var k in hiddenIds) next[k] = hiddenIds[k]
+    next[id] = true
+    hiddenIds = next                  // drop the row now, reconcile on the next fetch
+  }
 
   function complete(id) {
-    if (!id || isCompleted(id)) return
-    var next = {}
-    for (var k in completedIds) next[k] = completedIds[k]
-    next[id] = true
-    completedIds = next               // drop the row now, reconcile on the next fetch
+    if (!id || isHidden(id)) return
+    _hide(id)
     writeProc.command = [helper, "complete", id]
+    writeProc.running = true
+  }
+
+  // Files the node under today's day node AND makes it a todo. Moving alone
+  // would drop an Inbox bullet into today and then hide it, because the Today
+  // tab only lists todo-formatted items.
+  function moveToToday(id) {
+    if (!id || isHidden(id)) return
+    _hide(id)
+    writeProc.command = [helper, "move", id]
     writeProc.running = true
   }
 
@@ -90,17 +110,19 @@ Item {
         root.error = ""
         root.label = data.label || ""
         root.items = data.items || []
+        root.found = data.found || []
         root.stale = data.stale === true
         root.fetchedAt = data.fetchedAt || 0
 
-        // Forget only the local completions this fetch confirms. An id still
-        // present is either a write that failed or an export too old to show
-        // it yet; either way it stays hidden until a fetch proves otherwise.
+        // Forget only the local edits this fetch confirms. An id still present
+        // is either a write that failed or an export too old to have noticed;
+        // either way it stays hidden until a fetch proves otherwise.
         var present = {}
         for (var i = 0; i < root.items.length; i++) present[root.items[i].id] = true
+        for (var j = 0; j < root.found.length; j++) present[root.found[j].id] = true
         var kept = {}
-        for (var id in root.completedIds) if (present[id]) kept[id] = true
-        root.completedIds = kept
+        for (var id in root.hiddenIds) if (present[id]) kept[id] = true
+        root.hiddenIds = kept
       }
     }
     stderr: StdioCollector {
@@ -119,9 +141,9 @@ Item {
         var data = null
         try { data = JSON.parse(text) } catch (e) { data = null }
         if (!data || data.ok !== true) {
-          // Put the optimistic removal back: a failed complete must not look
-          // like a successful one.
-          root.completedIds = ({})
+          // Put the optimistic removal back: a failed write must not look like
+          // a successful one.
+          root.hiddenIds = ({})
           root.writeFailed(data && data.error ? data.error : "write failed")
         }
         root.refresh()

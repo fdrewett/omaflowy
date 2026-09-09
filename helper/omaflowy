@@ -146,19 +146,53 @@ def invalidate():
 # --------------------------------------------------------------------------
 
 TIME_RE = re.compile(r"<time[^>]*>(.*?)</time>", re.I | re.S)
+TIME_EL_RE = re.compile(r"<time\b[^>]*>.*?</time>", re.I | re.S)
+TIME_ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 TAG_RE = re.compile(r"<[^>]+>")
 
 
-def plain(name):
+def date_pills(node):
+    """Every <time> pill on a node, as (date, "HH:MM" or None).
+
+    Workflowy stores a date as a <time> element whose attributes carry the
+    parts and whose body is the rendered label -- so the attributes are what to
+    match on. The body is locale- and format-dependent and is only good for
+    display.
+    """
+    out = []
+    for field in ("name", "note"):
+        for el in TIME_EL_RE.findall(node.get(field) or ""):
+            a = dict(TIME_ATTR_RE.findall(el))
+            try:
+                d = datetime.date(int(a["startYear"]), int(a["startMonth"]),
+                                  int(a["startDay"]))
+            except (KeyError, ValueError):
+                continue
+            at = None
+            if "startHour" in a:
+                try:
+                    at = "%d:%02d" % (int(a["startHour"]), int(a.get("startMinute", 0)))
+                except ValueError:
+                    at = None
+            out.append((d, at))
+    return out
+
+
+def plain(name, drop_dates=False):
     """Workflowy names are HTML. Render them the way the app shows them.
 
     <time> pills carry their display text as the element body, so keeping that
     and dropping the attributes is what makes a date read "Wed, Sep 9, 2026"
     instead of a wall of startYear/startMonth markup.
+
+    `drop_dates` removes the pill entirely. Under a "dated today" heading the
+    label is already implied, and leaving it in gives rows that read "check in
+    with a colleague Tue, Sep 8, 2026".
     """
     if not name:
         return ""
-    return html.unescape(TAG_RE.sub("", TIME_RE.sub(lambda m: m.group(1), name))).strip()
+    s = TIME_EL_RE.sub("", name) if drop_dates else TIME_RE.sub(lambda m: m.group(1), name)
+    return re.sub(r"\s{2,}", " ", html.unescape(TAG_RE.sub("", s))).strip()
 
 
 # --------------------------------------------------------------------------
@@ -207,14 +241,50 @@ class Tree:
         return kids[0].get("parent_id") if kids else None
 
 
-def item(node, trail):
+def item(node, trail, drop_dates=False, at=None):
     return {
         "id": node["id"],
-        "text": plain(node.get("name")),
+        "text": plain(node.get("name"), drop_dates),
         "note": plain(node.get("note")),
         "path": " / ".join(plain(a.get("name"))[:28] for a in trail),
         "createdAt": node.get("createdAt"),
+        "at": at or "",
     }
+
+
+def found_dates(tree, day, day_id, exclude):
+    """Open nodes carrying a date pill for `day` but living somewhere else.
+
+    This is Workflowy's own "Found Dates" list, and it is the half of a day
+    that the day node does not contain: a note written under last Friday that
+    says "check in with a colleague [today]" is work due today and is
+    nowhere near today's bullets.
+
+    Two exclusions, both of which the app also makes and both of which showed
+    up immediately in real data: the day node itself is named with its own date
+    and matches trivially, and anything already under the day node is in the
+    list above this one.
+    """
+    out = []
+    for node in tree.nodes:
+        if node.get("completed") or node["id"] == day_id:
+            continue
+        hit = next((p for p in date_pills(node) if p[0] == day), None)
+        if hit is None:
+            continue
+        trail = tree.trail(node)
+        ids = [a["id"] for a in trail]
+        if day_id and day_id in ids:
+            continue
+        if exclude and any(
+                any(x.lower() in plain(a.get("name")).lower() for x in exclude)
+                for a in trail):
+            continue
+        row = item(node, trail[-3:], drop_dates=True, at=hit[1])
+        if row["text"]:
+            out.append(row)
+    out.sort(key=lambda i: (i["at"] == "", i["at"]))
+    return out
 
 
 def is_todo(node):
@@ -264,9 +334,10 @@ def collect(tree, root_id, todos_only, exclude, relative_to=None):
 # commands
 # --------------------------------------------------------------------------
 
-def envelope(source, label, items, stale):
+def envelope(source, label, items, stale, found=None):
     return {"ok": True, "source": source, "label": label, "items": items,
-            "count": len(items), "stale": stale, "fetchedAt": int(time.time())}
+            "found": found or [], "count": len(items), "stale": stale,
+            "fetchedAt": int(time.time())}
 
 
 def config_error(e):
@@ -283,15 +354,17 @@ def cmd_list(args):
 
         if args.source == "today":
             day = args.date or datetime.date.today().isoformat()
+            day_date = datetime.date.fromisoformat(day)
             day_id = tree.day_node(day)
+            found = found_dates(tree, day_date, day_id, exclude)
             if not day_id or day_id not in tree.by_id:
                 # Either nothing has been written to today yet, or the day node
-                # is newer than the cached export. Both mean "no rows to show",
-                # not an error.
-                return envelope("today", day, [], stale)
+                # is newer than the cached export. Neither is an error -- and
+                # found dates still stand on their own.
+                return envelope("today", day, [], stale, found)
             items = collect(tree, day_id, True, exclude, relative_to=day_id)
             items.sort(key=lambda i: i.get("createdAt") or 0)
-            return envelope("today", day, items, stale)
+            return envelope("today", day, items, stale, found)
 
         if args.source == "inbox":
             inbox = tree.top_level("Inbox")
@@ -328,6 +401,32 @@ def cmd_complete(args):
         return {"ok": False, "error": "%s %s" % (r["__error__"], r.get("body", ""))}
     invalidate()
     return {"ok": True, "id": args.node_id}
+
+
+def cmd_move(args):
+    """Move a node under a day node and make it a todo.
+
+    Both halves matter. Moving alone would file an Inbox bullet under today and
+    then hide it, because the Today tab only shows todo-formatted items -- the
+    thing would vanish from both lists. Setting layoutMode on an EXISTING node
+    is something only the public API can do; the MCP server ignores
+    `block_format` on replace.
+
+    A move against a bare "YYYY-MM-DD" materialises the day node if it does not
+    exist yet.
+    """
+    day = args.date or datetime.date.today().isoformat()
+    r = _req("POST", "/nodes/%s/move" % args.node_id,
+             {"parent_id": day, "position": "bottom"})
+    if isinstance(r, dict) and r.get("__error__"):
+        return {"ok": False, "error": "move: %s %s" % (r["__error__"], r.get("body", ""))}
+    r = _req("POST", "/nodes/%s" % args.node_id, {"layoutMode": "todo"})
+    if isinstance(r, dict) and r.get("__error__"):
+        # It is under today either way; say so rather than claiming failure.
+        invalidate()
+        return {"ok": True, "warning": "moved, but layout unchanged: %s" % r["__error__"]}
+    invalidate()
+    return {"ok": True}
 
 
 def cmd_add(args):
@@ -367,6 +466,11 @@ def main():
     c = sub.add_parser("complete")
     c.add_argument("node_id")
     c.set_defaults(fn=cmd_complete)
+
+    mv = sub.add_parser("move")
+    mv.add_argument("node_id")
+    mv.add_argument("--date")
+    mv.set_defaults(fn=cmd_move)
 
     a = sub.add_parser("add")
     a.add_argument("text")

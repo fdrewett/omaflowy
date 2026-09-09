@@ -6,10 +6,13 @@
 -- manifest.json and the QML, and never touches Hyprland config. The line above
 -- is the whole wiring.
 
--- Open the panel with the cursor already in the capture field. This is the one
--- worth a global bind: it is the path from "I just thought of something" to a
--- todo under today's date without leaving the window you are in.
+-- Capture. The one worth a global bind: the path from "I just thought of
+-- something" to a todo under today's date without leaving the window you are
+-- in. Opens the panel with the cursor already in the field.
 o.bind("SUPER + ALT + W", "Workflowy: capture a todo", "omarchy-shell omaflowy capture")
 
--- The list, without the field grabbing focus.
+-- Today's list, without the field grabbing focus.
 o.bind("SUPER + SHIFT + W", "Workflowy: today's todos", "omarchy-shell omaflowy toggle")
+
+-- Straight to a tab. `tab` opens the panel and selects it: today | inbox | all.
+o.bind("SUPER + ALT + I", "Workflowy: inbox", "omarchy-shell omaflowy tab inbox")

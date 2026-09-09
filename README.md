@@ -44,14 +44,14 @@ dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/frank.omaflowy/hypr/omaflo
 ```
 
 That gives you `SUPER + ALT + W` to open the panel with the cursor already in
-the capture field, and `SUPER + SHIFT + W` for the list. Edit
-[`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your own keys.
+the capture field, `SUPER + SHIFT + W` for the list, and `SUPER + ALT + I` for
+the Inbox. Edit [`hypr/omaflowy.lua`](hypr/omaflowy.lua) to pick your own keys.
 
 ## The three tabs
 
 | Tab | Shows | Rule |
 |---|---|---|
-| **Today** | open todos under today's calendar day node | `layoutMode == "todo"`, not completed |
+| **Today** | open todos under today's calendar day node, then **Found Dates** | `layoutMode == "todo"`, not completed |
 | **Inbox** | everything open in the Inbox | any layout, not completed |
 | **All** | every open todo in the account | `layoutMode == "todo"`, not completed |
 
@@ -73,6 +73,31 @@ A completed *ancestor* does not hide an open todo. Ticking off a section header
 like "Tuesday plan — 8 Sep" leaves the unticked todos under it visible, which is
 what Workflowy itself does.
 
+### Found Dates
+
+Below today's list, the same thing Workflowy calls Found Dates: open items
+carrying a date pill for today that live somewhere else entirely. A line written
+under last Friday saying "check in with a colleague `[today]`" is work due
+today and is nowhere near today's bullets.
+
+Matching is on the `<time>` element's `startYear`/`startMonth`/`startDay`
+attributes, not its rendered label, which is Workflowy's to format. Two things
+are excluded, both of which the app excludes too and both of which turned up on
+the first run: the day node itself is named with its own date and matches
+trivially, and anything already under the day node is in the list above. A time
+of day, when the pill carries one, is shown on the line and sorts the section.
+
+### Move to today
+
+Inbox and All rows carry a move button. It files the node under today's day node
+**and sets `layoutMode` to `todo`**.
+
+Both halves are needed. Moving alone would drop an Inbox bullet into today and
+then hide it, because the Today tab only lists todo-formatted items — the thing
+would vanish from both lists. Setting `layoutMode` on an existing node is
+something only the public API can do; the MCP server ignores `block_format` on
+replace.
+
 ## Settings
 
 `omarchy bar` settings, or the `barWidget` entry in `~/.config/omarchy/shell.json`:
@@ -88,6 +113,17 @@ what Workflowy itself does.
 `excludePaths` exists for recurring templates. If a daily check-in template
 stamps a block of section headers into every day, name its parent here and they
 stop competing with real work.
+
+## Envelope keys
+
+Three endpoints, three conventions, none of them documented — verified
+2026-09-08:
+
+```
+GET  /nodes/:id  ->  {"node":  {...}}      singular
+GET  /nodes      ->  {"nodes": [...]}      plural
+POST /nodes      ->  {"item_id": "..."}    neither
+```
 
 ## How it reads Workflowy
 
@@ -129,6 +165,7 @@ noticed.
 ./dev.sh --soft   # rescanPlugins instead of a restart
 omarchy plugin validate .
 omarchy-shell omaflowy debug     # store state: error, count, last fetch
+omarchy-shell omaflowy tab inbox # open the panel on a tab (today|inbox|all)
 ```
 
 `dev.sh` restarts the shell by default, and that is deliberate.

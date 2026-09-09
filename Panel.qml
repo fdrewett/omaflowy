@@ -21,6 +21,14 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
+  // Found dates only mean anything against a specific day, so they ride with
+  // the Today tab and nowhere else.
+  readonly property bool showFound:
+    sources[sourceIndex] === "today" && store.visibleFound.length > 0
+  // Somewhere else in the tree is exactly where these live, so the move is the
+  // useful action; on the Today tab it would be a no-op.
+  readonly property bool canMove: sources[sourceIndex] !== "today"
+
   readonly property var sources: ["today", "inbox", "all"]
   readonly property var sourceLabels: ["Today", "Inbox", "All"]
   property int sourceIndex: 0
@@ -38,8 +46,13 @@ Panel {
     if (store.error !== "") return store.error
     if (!store.everLoaded) return "Loading…"
     var n = store.count
-    var noun = n === 1 ? " item" : " items"
-    return (n === 0 ? "Nothing open" : n + noun) + (store.stale ? " · cached" : "")
+    var f = store.visibleFound.length
+    var parts = []
+    if (n > 0) parts.push(n + (n === 1 ? " item" : " items"))
+    if (f > 0) parts.push(f + " dated today")
+    if (parts.length === 0) parts.push("Nothing open")
+    if (store.stale) parts.push("cached")
+    return parts.join(" · ")
   }
 
   function refresh() { store.refresh(); todayProbe.reload() }
@@ -150,8 +163,15 @@ Panel {
                               n: store.count, at: store.fetchedAt,
                               helper: store.helper, probe: root.todayLoaded })
     }
-    // The global keybinding's entry point.
+    // The global keybinding's entry points.
     function capture(): string { root.captureFocus(); return "ok" }
+    function tab(name: string): string {
+      var i = root.sources.indexOf(String(name || "").toLowerCase())
+      if (i < 0) return "unknown tab"
+      root.open()
+      root.selectSource(i)
+      return "ok"
+    }
     // Capture without opening anything, for a bind that should not steal focus.
     function add(text: string): string {
       if (!text || text.trim() === "") return "empty"
@@ -299,8 +319,42 @@ Panel {
             }
           }
 
+          PanelSeparator {
+            visible: root.showFound
+            foreground: root.foreground
+          }
+
+          Column {
+            visible: root.showFound
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              // Workflowy's own name for these, so the two agree.
+              text: "FOUND DATES"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Column {
+              id: foundColumn
+              width: parent.width
+              spacing: Style.space(4)
+
+              Repeater {
+                model: store.visibleFound
+                ItemRow {
+                  required property var modelData
+                  width: foundColumn.width
+                  item: modelData
+                }
+              }
+            }
+          }
+
           Text {
             visible: store.everLoaded && store.error === "" && store.count === 0
+                     && !root.showFound
             width: parent.width
             textFormat: Text.PlainText
             text: root.sources[root.sourceIndex] === "all"
@@ -354,6 +408,7 @@ Panel {
       // default for a list you mostly scan.
       Item {
         width: rowLayout.width - completeButton.width - Style.space(8)
+                 - (moveButton.visible ? moveButton.width + Style.space(8) : 0)
         implicitHeight: rowText.implicitHeight
 
         Column {
@@ -369,7 +424,10 @@ Panel {
             id: label
             width: parent.width
             textFormat: Text.PlainText
-            text: row.item.text
+            // A found date can carry a time of day; it is the only thing that
+            // orders the section, so it belongs on the line itself.
+            text: String(row.item.at || "") !== ""
+              ? row.item.at + "  " + row.item.text : row.item.text
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -402,6 +460,25 @@ Panel {
           onExited: row.hasCursor = false
           onClicked: root.openNode(row.item.id)
         }
+      }
+
+      PanelActionButton {
+        id: moveButton
+        iconText: "\udb82\udc17"
+        tooltipText: "Move to today"
+        foreground: hovered ? root.accent : root.dim
+        fontSize: Style.font.body
+        visible: root.canMove
+        // Present but quiet, rather than hover-only. A control that is
+        // invisible until the cursor lands on the right row is a control most
+        // people never find, and this one is the whole point of the Inbox tab.
+        opacity: row.hasCursor || hovered ? 1.0 : 0.35
+        anchors.top: parent.top
+        anchors.topMargin: Math.max(0, (rowText.firstLineHeight - height) / 2)
+        property bool hovered: false
+        Behavior on opacity { NumberAnimation { duration: 100 } }
+        onHovered: function(on) { hovered = on }
+        onClicked: store.moveToToday(row.item.id)
       }
     }
 
