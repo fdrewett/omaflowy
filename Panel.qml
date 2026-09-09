@@ -33,8 +33,12 @@ Panel {
   readonly property var sourceLabels: ["Today", "Inbox", "All"]
   property int sourceIndex: 0
   property bool settingsOpen: false
+  property bool menuOpen: false
+
+  function closeMenu() { menuOpen = false }
 
   function toggleSettings() {
+    menuOpen = false
     settingsOpen = !settingsOpen
     if (settingsOpen && !store.bindsLoaded) store.loadBinds()
     if (settingsOpen && !store.authLoaded) store.loadAuth()
@@ -55,7 +59,7 @@ Panel {
     store.error !== "" ? "󰅚" : (todayLoaded ? "󰄰 " + todayCount : "󰄰 ·")
 
   readonly property string heroMeta: {
-    if (store.authLoaded && !store.authConfigured) return "No API token — open settings"
+    if (store.authLoaded && !store.authConfigured) return "No API token — open ⋮ → Settings"
     if (store.error !== "") return store.error
     if (!store.everLoaded) return "Loading…"
     var n = store.count
@@ -206,6 +210,7 @@ Panel {
     // Opening should not show a stale list, but re-fetching on every toggle
     // would burn requests while the panel is flicked open and shut.
     function onOpenedChanged() {
+      if (!root.opened) root.menuOpen = false
       if (root.opened && Date.now() / 1000 - store.fetchedAt > 30) root.refresh()
     }
   }
@@ -322,32 +327,95 @@ Panel {
           spacing: Style.space(12)
 
           PanelHero {
+            id: hero
             width: parent.width
             title: "Workflowy"
             meta: root.heroMeta
-            detail: store.label
+            // `detail` is deliberately unset. PanelHero renders it as a pill
+            // inside the label column, which is inset by the trailing control
+            // -- so the date landed to the LEFT of the buttons with the
+            // buttons hanging off the edge beside it. Both live in the
+            // trailing slot instead, which is the only thing actually pinned
+            // to the hero's right edge.
             foreground: root.foreground
             fontFamily: root.fontFamily
             metaOpacity: store.error !== "" ? 1.0 : 0.7
 
             trailingControl: Component {
               Row {
-                spacing: Style.space(4)
+                spacing: Style.space(6)
 
-                PanelActionButton {
-                  iconText: "󰑐"
-                  tooltipText: "Refresh"
-                  foreground: root.foreground
-                  enabled: !store.loading
-                  opacity: store.loading ? 0.4 : 1.0
-                  onClicked: root.refresh()
+                BorderSurface {
+                  // Matches PanelHero's own detail pill, so the date reads the
+                  // same as it did before it moved.
+                  visible: store.label !== ""
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: dateText.implicitWidth + Style.space(10)
+                  implicitHeight: dateText.implicitHeight + Style.space(4)
+                  color: "transparent"
+                  borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+                  radius: Style.cornerRadius
+
+                  Text {
+                    id: dateText
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: store.label
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                  }
                 }
 
                 PanelActionButton {
-                  iconText: "󰒓"
-                  tooltipText: root.settingsOpen ? "Back to the list" : "Keyboard shortcuts"
-                  foreground: root.settingsOpen ? root.accent : root.foreground
-                  onClicked: root.toggleSettings()
+                  iconText: "󰇙"
+                  tooltipText: "More"
+                  bordered: true
+                  anchors.verticalCenter: parent.verticalCenter
+                  foreground: root.menuOpen || root.settingsOpen ? root.accent
+                                                                 : root.foreground
+                  onClicked: root.menuOpen = !root.menuOpen
+                }
+              }
+            }
+          }
+
+          // The menu sits in the column flow rather than floating: a popup
+          // anchored inside a Flickable has to track scrolling, and there are
+          // two entries.
+          Item {
+            width: parent.width
+            visible: root.menuOpen
+            implicitHeight: visible ? menuCard.implicitHeight : 0
+
+            BorderSurface {
+              id: menuCard
+              anchors.right: parent.right
+              implicitWidth: Math.min(parent.width, Style.space(230))
+              implicitHeight: menuColumn.implicitHeight + Style.space(8)
+              color: "transparent"
+              borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+              radius: Style.cornerRadius
+
+              Column {
+                id: menuColumn
+                anchors.centerIn: parent
+                width: parent.width - Style.space(8)
+
+                MenuRow {
+                  width: parent.width
+                  label: store.loading ? "Refreshing…" : "Refresh"
+                  glyph: "󰑐"
+                  enabled: !store.loading
+                  onTriggered: { root.refresh(); root.closeMenu() }
+                }
+
+                MenuRow {
+                  width: parent.width
+                  label: root.settingsOpen ? "Back to the list" : "Settings"
+                  glyph: "󰒓"
+                  onTriggered: root.toggleSettings()
                 }
               }
             }
@@ -616,6 +684,54 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  component MenuRow: CursorSurface {
+    id: menuRow
+    required property string label
+    required property string glyph
+    property bool enabled: true
+    signal triggered()
+
+    foreground: root.foreground
+    implicitHeight: Style.space(30)
+    opacity: enabled ? 1.0 : 0.4
+
+    Row {
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(8)
+      anchors.rightMargin: Style.space(8)
+      spacing: Style.space(8)
+
+      Text {
+        text: menuRow.glyph
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        text: menuRow.label
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      enabled: menuRow.enabled
+      onEntered: menuRow.hasCursor = true
+      onExited: menuRow.hasCursor = false
+      onClicked: menuRow.triggered()
     }
   }
 

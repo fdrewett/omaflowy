@@ -397,8 +397,8 @@ def envelope(source, label, items, stale, found=None):
 
 def config_error(e):
     if isinstance(e, FileNotFoundError):
-        return "No API token. Open settings (the cog) and paste one."
-    return "No API token. Open settings (the cog) and paste one."
+        return "No API token. Open ⋮ → Settings and paste one."
+    return "No API token. Open ⋮ → Settings and paste one."
 
 
 def cmd_list(args):

@@ -61,7 +61,7 @@ the middle. Get one at <https://workflowy.com/api-key/>.
 
 Two ways to provide it, checked in this order:
 
-1. **The settings panel** — the cog beside Refresh has a token field. It
+1. **The settings panel** — ⋮ → Settings has a token field. It
    verifies the token against Workflowy before saving it to
    `~/.config/omaflowy/token`, created `0600`. Nothing else to install.
 2. **The [`wf` CLI](https://github.com/malcolmocean/workflowy-cli)'s config** at
@@ -125,7 +125,7 @@ dismisses the panel.
 
 ### Changing or disabling them
 
-**From the panel:** the cog beside Refresh opens a keyboard-shortcut editor —
+**From the panel:** ⋮ → Settings opens a keyboard-shortcut editor —
 a toggle to switch each bind off and a field to retype the combo. Saving writes
 `~/.config/omaflowy/binds.lua` and reloads Hyprland. It warns when a combo is
 already held by another bind, which is otherwise invisible.
