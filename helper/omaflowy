@@ -40,6 +40,13 @@ class FetchError(RuntimeError):
 
 
 BASE = "https://workflowy.com/api/v1"
+# Mirrors are invisible on the production API: a mirrored node comes back with
+# an empty name, no note, and layoutMode "bullets", so anything mirrored into
+# today reads as blank and gets dropped. The beta host returns the same export,
+# same node count, with mirrors resolved -- real name, real layoutMode, and a
+# data.mirror.origin_id pointing at the original. Reads prefer it and fall back
+# to production; writes always go to production, which is the stable surface.
+BETA_BASE = "https://beta.workflowy.com/api/v1"
 # Preferred store: the OS keyring, via libsecret's secret-tool. Encrypted at
 # rest and unlocked with the login session, which a 0600 file is not -- that
 # file is readable by root and by anything already running as this user.
@@ -62,9 +69,16 @@ BIND_LABELS = {"capture": "Capture",
 MODBITS = {"SHIFT": 1, "CAPS": 2, "CTRL": 4, "CONTROL": 4, "ALT": 8,
            "MOD2": 16, "MOD3": 32, "SUPER": 64, "MOD5": 128}
 CACHE_DIR = os.path.expanduser("~/.cache/omaflowy")
+# One cache file per source. The two exports are NOT interchangeable -- the
+# production one has mirrors blanked out -- so sharing a path meant a single
+# --no-mirrors call poisoned the cache and mirrored items vanished from the
+# panel until it expired.
 EXPORT_CACHE = os.path.join(CACHE_DIR, "export.json")
+EXPORT_CACHE_PLAIN = os.path.join(CACHE_DIR, "export-nomirrors.json")
 LOCK_FILE = os.path.join(CACHE_DIR, "export.lock")
 TIMEOUT = 45
+# Single-element list so cmd_list can flip it before export() runs.
+MIRRORS = [True]
 
 
 # --------------------------------------------------------------------------
@@ -175,9 +189,42 @@ def _req(method, path, payload=None, **params):
 # the export, cached on disk and shared between instances
 # --------------------------------------------------------------------------
 
+def cache_path():
+    return EXPORT_CACHE if MIRRORS[0] else EXPORT_CACHE_PLAIN
+
+
 def _read_cache():
-    with open(EXPORT_CACHE) as fh:
+    with open(cache_path()) as fh:
         return json.load(fh)
+
+
+def _fetch_export(base):
+    url = base + "/nodes-export"
+    req = urllib.request.Request(url, headers={
+        "Authorization": "Bearer " + token(), "Accept": "application/json"})
+    body = urllib.request.urlopen(req, timeout=TIMEOUT).read().decode()
+    return json.loads(body)
+
+
+def fetch_export(prefer_beta=True):
+    """The whole account. Beta first for mirror resolution, production if not.
+
+    A beta endpoint is not something to bet the widget on, so any failure at
+    all falls through rather than surfacing -- the cost is that mirrors go
+    back to being invisible, not that the panel breaks.
+    """
+    bases = ([BETA_BASE, BASE] if prefer_beta else [BASE])
+    last = None
+    for b in bases:
+        try:
+            r = _fetch_export(b)
+            if r.get("nodes"):
+                return r
+        except Exception as e:
+            last = e
+    if last:
+        raise last
+    return None
 
 
 def export(max_age):
@@ -190,7 +237,7 @@ def export(max_age):
     """
     now = time.time()
     try:
-        if now - os.stat(EXPORT_CACHE).st_mtime < max_age:
+        if now - os.stat(cache_path()).st_mtime < max_age:
             return _read_cache(), False
     except (OSError, ValueError):
         pass
@@ -210,27 +257,29 @@ def export(max_age):
             # Re-check under the lock: whoever we queued behind has just
             # written a fresh copy, and refetching it would be the 429.
             try:
-                if time.time() - os.stat(EXPORT_CACHE).st_mtime < max_age:
+                if time.time() - os.stat(cache_path()).st_mtime < max_age:
                     return _read_cache(), False
             except (OSError, ValueError):
                 pass
 
-            r = _req("GET", "/nodes-export")
-            if isinstance(r, dict) and not r.get("__error__") and r.get("nodes"):
-                tmp = EXPORT_CACHE + ".tmp"
+            try:
+                r = fetch_export(MIRRORS[0])
+            except Exception:
+                r = None
+            if isinstance(r, dict) and r.get("nodes"):
+                tmp = cache_path() + ".tmp"
                 # Create 0600 up front rather than chmod-ing after: between a
                 # default-mode create and a later chmod, the whole account sits
                 # world-readable on disk.
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 with os.fdopen(fd, "w") as fh:
                     json.dump(r, fh)
-                os.replace(tmp, EXPORT_CACHE)   # never leave a half-written cache
+                os.replace(tmp, cache_path())   # never leave a half-written cache
                 return r, True is False         # fresh
             try:                                # refused: stale beats nothing
                 return _read_cache(), True
             except (OSError, ValueError):
-                raise FetchError("export failed: %s"
-                                 % ((r or {}).get("__error__") or "unknown"))
+                raise FetchError("could not fetch your Workflowy tree")
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
@@ -243,11 +292,12 @@ def invalidate():
     on -- which is why the panel also removes a completed row locally rather
     than waiting to be told.
     """
-    try:
-        os.remove(EXPORT_CACHE)
-    except OSError as e:
-        if e.errno != errno.ENOENT:
-            raise
+    for p in (EXPORT_CACHE, EXPORT_CACHE_PLAIN):
+        try:
+            os.remove(p)
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                raise
 
 
 # --------------------------------------------------------------------------
@@ -351,8 +401,13 @@ class Tree:
 
 
 def item(node, trail, drop_dates=False, at=None):
+    # A mirror is acted on through its origin: completing the placeholder is
+    # not what "tick this off" means, and the origin is the node that actually
+    # carries the state.
+    mirror = ((node.get("data") or {}).get("mirror") or {}).get("origin_id")
     return {
-        "id": node["id"],
+        "id": mirror or node["id"],
+        "mirror": bool(mirror),
         "text": plain(node.get("name"), drop_dates),
         "note": plain(node.get("note")),
         "path": " / ".join(plain(a.get("name"))[:28] for a in trail),
@@ -457,6 +512,7 @@ def config_error(e):
 
 def cmd_list(args):
     exclude = [x.strip() for x in (args.exclude or "").split(",") if x.strip()]
+    MIRRORS[0] = not args.no_mirrors
     try:
         payload, stale = export(args.max_age)
         tree = Tree(payload)
@@ -473,6 +529,13 @@ def cmd_list(args):
                 return envelope("today", day, [], stale, found)
             items = collect(tree, day_id, True, exclude, relative_to=day_id)
             items.sort(key=lambda i: i.get("createdAt") or 0)
+            # A node mirrored into today is BOTH a today item (the mirror lives
+            # under the day node) and a found date (the origin lives elsewhere
+            # and carries today's pill). They are different nodes with one
+            # identity, so de-duplicate on the resolved id -- which is the
+            # origin for a mirror, so the two match.
+            here = {i["id"] for i in items}
+            found = [f for f in found if f["id"] not in here]
             return envelope("today", day, items, stale, found)
 
         if args.source == "inbox":
@@ -782,6 +845,8 @@ def main():
                     help="seconds a cached export stays usable (limit is 1 req/min)")
     ls.add_argument("--exclude", default="",
                     help="comma-separated ancestor names to prune")
+    ls.add_argument("--no-mirrors", action="store_true",
+                    help="skip the beta endpoint; mirrored items become invisible")
     ls.set_defaults(fn=cmd_list)
 
     c = sub.add_parser("complete")

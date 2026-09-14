@@ -23,8 +23,12 @@ Panel {
 
   // Found dates only mean anything against a specific day, so they ride with
   // the Today tab and nowhere else.
+  // Off by setting, and then they neither show nor count -- a found date the
+  // user has switched off should not quietly inflate the bar.
+  readonly property bool foundEnabled: setting("showFoundDates", true)
+  readonly property int foundCount: foundEnabled ? store.visibleFound.length : 0
   readonly property bool showFound:
-    sources[sourceIndex] === "today" && store.visibleFound.length > 0
+    sources[sourceIndex] === "today" && foundCount > 0
   // Somewhere else in the tree is exactly where these live, so the move is the
   // useful action; on the Today tab it would be a no-op.
   readonly property bool canMove: sources[sourceIndex] !== "today"
@@ -69,7 +73,7 @@ Panel {
     if (store.error !== "") return store.error
     if (!store.everLoaded) return "Loading…"
     var n = store.count
-    var f = store.visibleFound.length
+    var f = root.foundCount
     var parts = []
     if (n > 0) parts.push(n + (n === 1 ? " item" : " items"))
     if (f > 0) parts.push(f + " dated today")
@@ -93,7 +97,10 @@ Panel {
     // Keep the pill in step without a second read when Today is on screen.
     function onItemsChanged() {
       if (root.sources[root.sourceIndex] !== "today") return
-      root.todayCount = store.count
+      // Found dates count. They are the day's work as much as anything filed
+      // under the day node is -- a bar reading 0 beside a panel listing an
+      // open item is just wrong, however defensible the arithmetic.
+      root.todayCount = store.count + root.foundCount
       root.todayLoaded = true
     }
   }
@@ -178,6 +185,7 @@ Panel {
     id: store
     source: root.sources[root.sourceIndex]
     maxAge: root.setting("exportMaxAgeSec", 90)
+    resolveMirrors: root.setting("resolveMirrors", true)
     exclude: root.setting("excludePaths", "")
     onWriteFailed: function(message) { root.refresh() }
   }
@@ -193,6 +201,7 @@ Panel {
               String(root.setting("exportMaxAgeSec", 90))]
              .concat(root.setting("excludePaths", "") !== ""
                      ? ["--exclude", root.setting("excludePaths", "")] : [])
+             .concat(root.setting("resolveMirrors", true) ? [] : ["--no-mirrors"])
     function reload() {
       if (root.sources[root.sourceIndex] === "today") return
       if (!running) running = true
@@ -201,7 +210,11 @@ Panel {
       onStreamFinished: {
         try {
           var d = JSON.parse(text)
-          if (d.ok) { root.todayCount = d.count; root.todayLoaded = true }
+          if (d.ok) {
+            root.todayCount = d.count
+              + (root.foundEnabled && d.found ? d.found.length : 0)
+            root.todayLoaded = true
+          }
         } catch (e) { /* the pill keeps its last honest value */ }
       }
     }
@@ -992,7 +1005,10 @@ Panel {
 
       PanelActionButton {
         id: completeButton
-        iconText: hovered ? "\udb80\udd32" : "\udb80\udd30"
+        // Workflowy marks a mirror with a diamond. Worth carrying over: this
+        // row completes the ORIGIN, which lives somewhere else entirely.
+        iconText: hovered ? "\udb80\udd32"
+                          : (row.item.mirror === true ? "\udb81\udf1e" : "\udb80\udd30")
         tooltipText: "Complete"
         foreground: hovered ? root.accent : root.foreground
         fontSize: Style.font.body

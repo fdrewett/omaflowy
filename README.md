@@ -193,12 +193,39 @@ carrying a date pill for today that live somewhere else entirely. A line written
 under last Friday saying "chase the gate permit `[today]`" is work due
 today and is nowhere near today's bullets.
 
+These count toward the bar as well. A pill reading 0 beside a panel listing an
+open item is wrong however defensible the arithmetic — which is exactly what
+happened with a timesheet task mirrored in from tomorrow. Set `showFoundDates`
+to false and they neither show nor count.
+
 Matching is on the `<time>` element's `startYear`/`startMonth`/`startDay`
 attributes, not its rendered label, which is Workflowy's to format. Two things
 are excluded, both of which the app excludes too and both of which turned up on
 the first run: the day node itself is named with its own date and matches
 trivially, and anything already under the day node is in the list above. A time
 of day, when the pill carries one, is shown on the line and sorts the section.
+
+### Mirrors
+
+A node mirrored into today shows up like any other todo, marked with a diamond
+the way Workflowy marks it. Ticking it completes the **origin**, which is the
+node that actually carries the state.
+
+This needs the beta API. On the production endpoint a mirror comes back with an
+empty name, no note and `layoutMode: "bullets"` — so anything mirrored into
+today is indistinguishable from a blank line and gets dropped. The beta host
+returns the same export, same node count, with the real name, the real layout,
+and a `data.mirror.origin_id`. Reads try beta and fall back to production on
+any failure, so the cost of beta being down is that mirrors go missing again,
+not that the panel breaks. Turn `resolveMirrors` off to stay on production.
+
+The two exports are cached separately. They are not interchangeable — one has
+mirrors blanked out — and sharing a cache file meant a single production read
+hid mirrored items until it expired.
+
+A mirror is also its own node under today *and* an origin elsewhere, so a
+mirrored item carrying today's date would otherwise be listed twice, once as a
+todo and once as a found date. They de-duplicate on the resolved id.
 
 ### Move to today
 

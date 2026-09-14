@@ -16,6 +16,7 @@ Item {
   // "today" | "inbox" | "all"
   property string source: "today"
   property int maxAge: 90
+  property bool resolveMirrors: true
   property string exclude: ""
 
   property var items: []
@@ -131,6 +132,7 @@ Item {
     if (loading) return
     loading = true
     var argv = [helper, "list", source, "--max-age", String(maxAge)]
+    if (!resolveMirrors) argv.push("--no-mirrors")
     if (exclude !== "") argv.push("--exclude", exclude)
     fetchProc.command = argv
     fetchProc.running = true

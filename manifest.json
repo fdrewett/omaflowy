@@ -23,7 +23,9 @@
       "openRefreshSec": 60,
       "exportMaxAgeSec": 90,
       "excludePaths": "",
-      "hideWhenEmpty": false
+      "hideWhenEmpty": false,
+      "showFoundDates": true,
+      "resolveMirrors": true
     },
     "schema": [
       {
@@ -60,6 +62,20 @@
         "label": "Skip subtrees named",
         "defaultValue": "",
         "description": "Comma-separated. A recurring template can stamp a dozen empty section headers into a day; name its parent here to keep them out."
+      },
+      {
+        "key": "showFoundDates",
+        "type": "boolean",
+        "label": "Show items dated today from elsewhere",
+        "defaultValue": true,
+        "description": "Workflowy's Found Dates: open items carrying today's date that live under another day. They are counted in the bar as well, so the pill never reads 0 while the panel is showing work."
+      },
+      {
+        "key": "resolveMirrors",
+        "type": "boolean",
+        "label": "Resolve mirrored items",
+        "defaultValue": true,
+        "description": "Workflowy mirrors are blank on the production API, so anything mirrored into today is invisible. Reading them needs the beta endpoint; turn this off to stay on production and lose mirrors."
       },
       {
         "key": "hideWhenEmpty",
