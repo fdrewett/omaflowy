@@ -36,6 +36,11 @@ Item {
   property real barThickness: 1
   property real bulletSize: 5
 
+  // Where the bars stop, as a fraction of the box. The mark's own proportion
+  // is .833; pulling it in frees the lower-right corner for a count badge,
+  // which a wide mark has nowhere else to put.
+  property real barLength: 0.833
+
   width: iconSize
   height: iconSize
   implicitWidth: iconSize
@@ -60,7 +65,7 @@ Item {
     readonly property int dot: Math.max(2, Math.round(root.bulletSize))
     readonly property int leftX: Math.round(root.iconSize * 0.223)
     readonly property int midX: Math.round(root.iconSize * 0.424)
-    readonly property int rightX: Math.round(root.iconSize * 0.833)
+    readonly property int rightX: Math.round(root.iconSize * root.barLength)
 
     Row3 { cx: solidMark.leftX; cy: Math.round(root.iconSize * 0.231) }
     Row3 { cx: solidMark.midX;  cy: Math.round(root.iconSize * 0.506) }

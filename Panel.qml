@@ -289,37 +289,44 @@ Panel {
     active: store.error !== ""
     tooltipText: store.error !== "" ? store.error : "Workflowy — today"
 
-    // BarIconButton is a fixed square slot and `iconComponent` replaces the
-    // glyph outright, so the count has to be composed alongside the mark and
-    // the slot widened to hold both. The optical canvas stays square, so the
-    // row is centred on it and overflows evenly rather than being clipped --
-    // nothing in the chain sets `clip`.
-    slotSize: Style.bar.iconSlot + Style.space(12)
-
+    // The count is a badge tucked into the mark rather than a sibling beside
+    // it, which is how omarchy-zerotier does it: anchored off the canvas
+    // centre so it sits in the lower-right quadrant, a size down, and
+    // NativeRendering because hinted glyphs stay legible at 8-9px where
+    // distance-field text goes soft. That keeps the widget inside the bar's
+    // normal square slot instead of widening it.
     iconComponent: Component {
       Item {
         anchors.fill: parent
 
-        Row {
+        WorkflowyIcon {
+          // Nudged up and left so the lower-right corner is free. ZeroTier's
+          // mark is tall and narrow and leaves that corner empty on its own;
+          // this one is wide, and its bottom bar runs straight through where
+          // the badge wants to sit.
           anchors.centerIn: parent
-          spacing: Style.space(4)
+          anchors.horizontalCenterOffset: -Style.space(1)
+          anchors.verticalCenterOffset: 0
+          iconSize: Math.round(button.opticalSize * 0.92)
+          // Bars pulled in, so the badge has a corner of its own.
+          barLength: 0.58
+          bulletSize: 4
+          color: store.error !== "" ? root.urgent : root.barForeground
+          solid: true
+        }
 
-          WorkflowyIcon {
-            anchors.verticalCenter: parent.verticalCenter
-            iconSize: Math.round(Style.bar.statusSlot * 0.95)
-            color: store.error !== "" ? root.urgent : root.barForeground
-            solid: true
-          }
-
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: store.error !== "" ? "!"
-                  : (root.todayLoaded ? String(root.todayCount) : "·")
-            color: root.barForeground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
+        Text {
+          anchors.left: parent.horizontalCenter
+          anchors.leftMargin: Style.space(1)
+          anchors.top: parent.verticalCenter
+          anchors.topMargin: -Style.space(1)
+          textFormat: Text.PlainText
+          text: store.error !== "" ? "!"
+                : (root.todayLoaded ? String(root.todayCount) : "·")
+          color: store.error !== "" ? root.urgent : root.barForeground
+          font.family: root.fontFamily
+          font.pixelSize: Math.max(8, Style.font.body - 2)
+          renderType: Text.NativeRendering
         }
       }
     }
