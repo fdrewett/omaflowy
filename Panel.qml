@@ -33,6 +33,12 @@ Panel {
   readonly property var sourceLabels: ["Today", "Inbox", "All"]
   property int sourceIndex: 0
   property bool settingsOpen: false
+
+  // First run. The panel becomes the setup card rather than showing an empty
+  // list and an error pointing at a menu the user has no reason to open yet.
+  readonly property bool needsAuth: store.authLoaded && !store.authConfigured
+  readonly property string tokenHome: store.authKeyring
+    ? "your OS keyring" : "a private file in ~/.config/omaflowy"
   property bool menuOpen: false
 
   function closeMenu() { menuOpen = false }
@@ -59,7 +65,7 @@ Panel {
     store.error !== "" ? "󰅚" : (todayLoaded ? "󰄰 " + todayCount : "󰄰 ·")
 
   readonly property string heroMeta: {
-    if (store.authLoaded && !store.authConfigured) return "No API token — open ⋮ → Settings"
+    if (root.needsAuth) return "API token required"
     if (store.error !== "") return store.error
     if (!store.everLoaded) return "Loading…"
     var n = store.count
@@ -72,7 +78,15 @@ Panel {
     return parts.join(" · ")
   }
 
-  function refresh() { store.refresh(); todayProbe.reload() }
+  function refresh() {
+    store.refresh()
+    // Re-read the token's whereabouts too. Checking it only at startup meant
+    // a token that went away -- revoked, cleared, a `wf` config moved -- left
+    // the panel insisting it was configured and showing the raw helper error
+    // instead of the setup card. The check is local and costs no request.
+    store.loadAuth()
+    todayProbe.reload()
+  }
 
   Connections {
     target: store
@@ -452,6 +466,73 @@ Panel {
             }
           }
 
+          Column {
+            visible: root.needsAuth
+            width: parent.width
+            spacing: Style.space(10)
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Paste your Workflowy API token once. It is stored in "
+                    + root.tokenHome + ", never in this plugin's settings, and "
+                    + "is only ever sent to workflowy.com."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Get one at workflowy.com/api-key — or if you already use "
+                    + "the wf CLI, it is picked up automatically."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              opacity: 0.8
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              TextField {
+                id: setupToken
+                width: parent.width - setupSave.width - Style.space(8)
+                password: true
+                placeholderText: "API token"
+                foreground: root.foreground
+                onAccepted: { store.setToken(text); text = "" }
+              }
+
+              Button {
+                id: setupSave
+                text: store.authSaving ? "Checking…" : "Save"
+                bordered: true
+                enabled: setupToken.text.trim() !== "" && !store.authSaving
+                opacity: enabled ? 1.0 : 0.4
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: { store.setToken(setupToken.text); setupToken.text = "" }
+              }
+            }
+
+            Text {
+              visible: store.authError !== ""
+              width: parent.width
+              textFormat: Text.PlainText
+              text: store.authError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+          }
+
           // The menu sits in the column flow rather than floating: a popup
           // anchored inside a Flickable has to track scrolling, and there are
           // two entries.
@@ -495,7 +576,7 @@ Panel {
           Row {
             width: parent.width
             spacing: Style.space(8)
-            visible: !root.settingsOpen
+            visible: !root.settingsOpen && !root.needsAuth
 
             TextField {
               id: capture
@@ -521,7 +602,7 @@ Panel {
 
           ButtonGroup {
             width: parent.width
-            visible: !root.settingsOpen
+            visible: !root.settingsOpen && !root.needsAuth
             options: root.sourceLabels
             // ButtonGroup speaks in labels, not indices, so the selected tab
             // round-trips through sourceLabels rather than being tracked twice.
@@ -533,11 +614,14 @@ Panel {
             }
           }
 
-          PanelSeparator { foreground: root.foreground }
+          PanelSeparator {
+            visible: !root.needsAuth
+            foreground: root.foreground
+          }
 
           Column {
             id: itemColumn
-            visible: !root.settingsOpen
+            visible: !root.settingsOpen && !root.needsAuth
             width: parent.width
             spacing: Style.space(4)
 
@@ -552,12 +636,12 @@ Panel {
           }
 
           PanelSeparator {
-            visible: root.showFound && !root.settingsOpen
+            visible: root.showFound && !root.settingsOpen && !root.needsAuth
             foreground: root.foreground
           }
 
           Column {
-            visible: root.showFound && !root.settingsOpen
+            visible: root.showFound && !root.settingsOpen && !root.needsAuth
             width: parent.width
             spacing: Style.space(10)
 
@@ -603,9 +687,10 @@ Panel {
                 if (!store.authConfigured)
                   return "No API token found. Paste one below — get it from "
                        + "workflowy.com/api-key"
-                return (store.authOwn ? "Using the token saved here"
-                                      : "Using the wf CLI's token")
-                       + " (" + store.authHint + ")"
+                var where = store.authSourceKind === "keyring" ? "Using the token in your OS keyring"
+                          : store.authSourceKind === "file" ? "Using the token saved here"
+                          : "Using the wf CLI's token"
+                return where + " (" + store.authHint + ")"
               }
               color: store.authLoaded && !store.authConfigured ? root.urgent : root.dim
               font.family: root.fontFamily
@@ -673,8 +758,8 @@ Panel {
             Text {
               width: parent.width
               textFormat: Text.PlainText
-              text: "Verified with Workflowy before it is saved, to "
-                    + "~/.config/omaflowy/token, readable only by you."
+              text: "Verified with Workflowy before it is saved, into "
+                    + root.tokenHome + "."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -742,7 +827,7 @@ Panel {
 
           Text {
             visible: store.everLoaded && store.error === "" && store.count === 0
-                     && !root.showFound && !root.settingsOpen
+                     && !root.showFound && !root.settingsOpen && !root.needsAuth
             width: parent.width
             textFormat: Text.PlainText
             text: root.sources[root.sourceIndex] === "all"

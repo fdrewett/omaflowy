@@ -12,6 +12,8 @@ the window you are in.
 - **`python3`** — the helper is standard library only. Nothing to `pip install`.
 - **`xdg-open`** — to open a node in Workflowy when you click its text.
 - **`hyprctl`** — only for the keybinding editor, and it ships with Hyprland.
+- **`secret-tool`** (libsecret) — optional. With it, the token lives in the OS
+  keyring; without it, in a `0600` file.
 - A **Workflowy account** and an [API token](https://workflowy.com/api-key/).
 
 The [`wf` CLI](https://github.com/malcolmocean/workflowy-cli) is *optional* —
@@ -33,7 +35,8 @@ omarchy plugin remove io.github.fdrewett.omaflowy --yes
 That leaves three things behind, all of them yours to keep or delete:
 
 ```bash
-rm -rf ~/.config/omaflowy   # your token and keybinding choices
+secret-tool clear service io.github.fdrewett.omaflowy username api-token
+rm -rf ~/.config/omaflowy   # keybinding choices (and the token, if no keyring)
 rm -rf ~/.cache/omaflowy    # the cached copy of your Workflowy tree
 ```
 
@@ -46,14 +49,19 @@ two directories and never edits your Hyprland config for you.
 A **Workflowy personal API token** — no OAuth, no account linking, no server in
 the middle. Get one at <https://workflowy.com/api-key/>.
 
-Two ways to provide it, checked in this order:
+On first open with no token, the panel *is* the setup screen — paste one and
+you are done. It can also be changed later from ⋮ → Settings.
 
-1. **The settings panel** — ⋮ → Settings has a token field. It
-   verifies the token against Workflowy before saving it to
-   `~/.config/omaflowy/token`, created `0600`. Nothing else to install.
-2. **The [`wf` CLI](https://github.com/malcolmocean/workflowy-cli)'s config** at
-   `~/.workflowy/config.json`, used as a fallback so an existing `wf` setup
-   needs no configuration at all:
+Sources are checked in this order:
+
+1. **The OS keyring** (`secret-service`, via `secret-tool`). This is where the
+   settings panel puts it: encrypted at rest and unlocked with your login
+   session, which a file on disk is not.
+2. **`~/.config/omaflowy/token`**, created `0600`, used only when no keyring
+   daemon is running — refusing to work at all would be worse.
+3. **The [`wf` CLI](https://github.com/malcolmocean/workflowy-cli)'s config** at
+   `~/.workflowy/config.json`, so an existing `wf` setup needs no configuration
+   at all:
 
    ```json
    { "activeAccount": "default", "accounts": { "default": { "token": "…" } } }
@@ -75,6 +83,10 @@ Nothing is stored in this repo or in `shell.json`. Specifically:
   header.
 - It is never logged. The `debug` IPC method reports counts and panel state
   only, never content or credentials.
+
+Whichever store it lands in, the token is verified against the API *before*
+being written, so a typo fails in the panel rather than becoming a broken
+widget later, and a bad credential is never persisted even briefly.
 
 **What does land on disk:** `~/.cache/omaflowy/export.json`, a copy of your
 whole Workflowy account (~19k nodes / ~6MB in one real account) used to serve

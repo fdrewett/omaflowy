@@ -31,7 +31,7 @@ ONE REQUEST PER MINUTE, so it is cached on disk, shared by every instance, and
 served stale rather than risking a 429. Total cost is now at most two requests
 a minute no matter how many monitors, tabs, or refreshes are in play.
 """
-import argparse, datetime, errno, fcntl, html, json, os, re, subprocess, sys, time
+import argparse, datetime, errno, fcntl, html, json, os, re, shutil, subprocess, sys, time
 import urllib.request, urllib.error, urllib.parse
 
 
@@ -40,7 +40,14 @@ class FetchError(RuntimeError):
 
 
 BASE = "https://workflowy.com/api/v1"
-# Omaflowy's own token file, written by the settings panel.
+# Preferred store: the OS keyring, via libsecret's secret-tool. Encrypted at
+# rest and unlocked with the login session, which a 0600 file is not -- that
+# file is readable by root and by anything already running as this user.
+KEYRING_SERVICE = "io.github.fdrewett.omaflowy"
+KEYRING_USER = "api-token"
+KEYRING_LABEL = "Omaflowy Workflowy API token"
+# Fallback when there is no secret-service: not every install runs a keyring
+# daemon, and refusing to work at all would be worse than a 0600 file.
 TOKEN_FILE = os.path.expanduser("~/.config/omaflowy/token")
 # The `wf` CLI's config, the fallback so existing setups need no work.
 WF_CONFIG = os.path.expanduser("~/.workflowy/config.json")
@@ -64,14 +71,58 @@ TIMEOUT = 45
 # transport
 # --------------------------------------------------------------------------
 
-def token():
-    """The API token, from Omaflowy's own file or the `wf` CLI's config.
+def keyring_available():
+    return shutil.which("secret-tool") is not None
 
-    Omaflowy's file wins because it is what the settings panel writes: someone
-    who has just typed a token into the panel means that one, even if a stale
-    `wf` config is also on disk. Falling back to `wf` keeps existing setups
-    working with nothing to configure.
+
+def keyring_lookup():
+    if not keyring_available():
+        return None
+    try:
+        r = subprocess.run(["secret-tool", "lookup",
+                            "service", KEYRING_SERVICE, "username", KEYRING_USER],
+                           capture_output=True, text=True, timeout=15)
+    except Exception:
+        return None
+    t = (r.stdout or "").strip()
+    return t or None
+
+
+def keyring_store(value):
+    if not keyring_available():
+        return False
+    try:
+        # The token goes in on stdin, never as an argument -- an argv secret is
+        # visible to every other user on the machine through `ps`.
+        r = subprocess.run(["secret-tool", "store", "--label=" + KEYRING_LABEL,
+                            "service", KEYRING_SERVICE, "username", KEYRING_USER],
+                           input=value, capture_output=True, text=True, timeout=30)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def keyring_clear():
+    if not keyring_available():
+        return
+    try:
+        subprocess.run(["secret-tool", "clear",
+                        "service", KEYRING_SERVICE, "username", KEYRING_USER],
+                       capture_output=True, timeout=15)
+    except Exception:
+        pass
+
+
+def token():
+    """The API token: keyring, then Omaflowy's file, then the `wf` CLI's config.
+
+    Order is most-deliberate first. The keyring and the file are both written
+    by the settings panel, so either means "the user typed this"; `wf` is the
+    convenience fallback so an existing setup needs no configuration at all.
     """
+    t = keyring_lookup()
+    if t:
+        return t
     try:
         with open(TOKEN_FILE) as fh:
             t = fh.read().strip()
@@ -85,19 +136,22 @@ def token():
 
 
 def token_source():
+    """Where the live token comes from, as a (kind, human label) pair."""
+    if keyring_lookup():
+        return ("keyring", "the OS keyring")
     try:
         if open(TOKEN_FILE).read().strip():
-            return TOKEN_FILE
+            return ("file", TOKEN_FILE)
     except OSError:
         pass
     try:
         with open(WF_CONFIG) as fh:
             d = json.load(fh)
         if d["accounts"][d.get("activeAccount") or "default"]["token"]:
-            return WF_CONFIG
+            return ("wf", WF_CONFIG)
     except (OSError, KeyError, ValueError):
         pass
-    return None
+    return (None, "")
 
 
 def _req(method, path, payload=None, **params):
@@ -609,20 +663,23 @@ def hypr_conflicts(binds):
 
 def cmd_auth(args):
     if args.op == "status":
-        src = token_source()
+        kind, label = token_source()
         hint = ""
-        if src:
+        if kind:
             try:
                 t = token()
                 # Enough to recognise which token is in use, not enough to use.
                 hint = (t[:4] + "…" + t[-4:]) if len(t) > 12 else "…"
             except Exception:
-                src = None
-        return {"ok": True, "configured": bool(src), "source": src or "",
-                "own": src == TOKEN_FILE, "hint": hint,
+                kind = None
+        return {"ok": True, "configured": bool(kind), "sourceKind": kind or "",
+                "source": label, "own": kind in ("keyring", "file"),
+                "hint": hint, "keyring": keyring_available(),
                 "wfConfig": WF_CONFIG, "tokenFile": TOKEN_FILE}
 
     if args.op == "clear":
+        # Clear both stores: leaving one behind would make "Forget" a lie.
+        keyring_clear()
         try:
             os.remove(TOKEN_FILE)
         except OSError as e:
@@ -652,6 +709,17 @@ def cmd_auth(args):
     except Exception as e:
         return {"ok": False, "error": "could not reach Workflowy: %s" % str(e)[:80]}
 
+    # Keyring first. Verification already passed above, so a token is only ever
+    # written once it is known to work -- there is no window where a bad
+    # credential sits in the keyring waiting to be rolled back.
+    if keyring_store(raw):
+        try:
+            os.remove(TOKEN_FILE)      # never leave a stale plaintext copy
+        except OSError:
+            pass
+        invalidate()                   # the cache belongs to the old account
+        return {"ok": True, "sourceKind": "keyring", "source": "the OS keyring"}
+
     os.makedirs(os.path.dirname(TOKEN_FILE), mode=0o700, exist_ok=True)
     try:
         os.chmod(os.path.dirname(TOKEN_FILE), 0o700)
@@ -664,8 +732,8 @@ def cmd_auth(args):
     with os.fdopen(fd, "w") as fh:
         fh.write(raw + "\n")
     os.replace(tmp, TOKEN_FILE)
-    invalidate()                       # the cache belongs to the old account
-    return {"ok": True, "source": TOKEN_FILE}
+    invalidate()
+    return {"ok": True, "sourceKind": "file", "source": TOKEN_FILE}
 
 
 def cmd_binds(args):

@@ -55,6 +55,8 @@ Item {
   property bool authConfigured: false
   property bool authOwn: false
   property string authSource: ""
+  property string authSourceKind: ""
+  property bool authKeyring: false
   property string authHint: ""
   property string authError: ""
   property bool authSaving: false
@@ -209,6 +211,8 @@ Item {
           root.authConfigured = d.configured === true
           root.authOwn = d.own === true
           root.authSource = d.source || ""
+          root.authSourceKind = d.sourceKind || ""
+          root.authKeyring = d.keyring === true
           root.authHint = d.hint || ""
           root.authLoaded = true
         } else {
