@@ -4,20 +4,7 @@ Today's open Workflowy todos, in the Omarchy bar. Click one to complete it,
 type to capture a new one, and hit a key from anywhere to add without leaving
 the window you are in.
 
-```
-○ 3          ┌ Workflowy ──────────────────────┐
-             │ 3 items              2026-09-08 │
-             │ ┌───────────────────────┐ ┌───┐ │
-             │ │ New todo for today…   │ │Add│ │
-             │ └───────────────────────┘ └───┘ │
-             │ [ Today ] Inbox   All           │
-             │ ─────────────────────────────── │
-             │ ○ schedule the on-call meeting  │
-             │   Tuesday plan — 8 Sep / This…  │
-             │ ○ start the team check-ins      │
-             │   Tuesday plan — 8 Sep / This…  │
-             └─────────────────────────────────┘
-```
+![Omaflowy in the Omarchy bar](preview.png)
 
 ## Requirements
 
