@@ -272,9 +272,43 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.pillText
     active: store.error !== ""
     tooltipText: store.error !== "" ? store.error : "Workflowy — today"
+
+    // BarIconButton is a fixed square slot and `iconComponent` replaces the
+    // glyph outright, so the count has to be composed alongside the mark and
+    // the slot widened to hold both. The optical canvas stays square, so the
+    // row is centred on it and overflows evenly rather than being clipped --
+    // nothing in the chain sets `clip`.
+    slotSize: Style.bar.iconSlot + Style.space(12)
+
+    iconComponent: Component {
+      Item {
+        anchors.fill: parent
+
+        Row {
+          anchors.centerIn: parent
+          spacing: Style.space(4)
+
+          WorkflowyIcon {
+            anchors.verticalCenter: parent.verticalCenter
+            iconSize: Math.round(Style.bar.statusSlot * 0.95)
+            color: store.error !== "" ? root.urgent : root.barForeground
+            solid: true
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: store.error !== "" ? "!"
+                  : (root.todayLoaded ? String(root.todayCount) : "·")
+            color: root.barForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+        }
+      }
+    }
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.captureFocus()
