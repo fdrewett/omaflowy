@@ -690,7 +690,11 @@ def cmd_auth(args):
     # set: the token arrives on STDIN, never argv -- an argument would be
     # visible to every other user on the machine via `ps`. This mirrors what
     # omarchy.network does for wifi passwords.
-    raw = sys.stdin.read().strip()
+    # readline(), NOT read(). read() waits for EOF, and the QML side writes
+    # the token with Process.write() without ever closing the pipe -- so the
+    # helper blocked on the read forever and the panel sat on "Checking...".
+    # The token is a single line; one line is all this needs.
+    raw = sys.stdin.readline().strip()
     if not raw:
         return {"ok": False, "error": "no token received"}
     if len(raw) < 20 or " " in raw:

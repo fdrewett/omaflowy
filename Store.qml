@@ -84,8 +84,23 @@ Item {
     authSaving = true
     authError = ""
     tokenProc.secret = t
+    tokenProc.stdinEnabled = true    // re-open; the previous save closed it
     tokenProc.command = [helper, "auth", "set"]
     tokenProc.running = true
+    authTimeout.restart()
+  }
+
+  // Nothing should leave the button reading "Checking..." forever. Verifying a
+  // token is one HTTPS round trip plus a keyring write; 25s is generous.
+  Timer {
+    id: authTimeout
+    interval: 25000
+    onTriggered: {
+      if (!root.authSaving) return
+      tokenProc.running = false
+      root.authSaving = false
+      root.authError = "Timed out saving the token - is a keyring running?"
+    }
   }
 
   // --- keybindings -------------------------------------------------------
@@ -231,6 +246,10 @@ Item {
     onStarted: {
       write(secret + "\n")
       secret = ""                  // do not keep it in a QML property
+      // Close the pipe as well as writing a newline. A reader that waits for
+      // EOF rather than for a line would otherwise hang, and it cannot tell
+      // "no more input yet" from "that is all there is".
+      stdinEnabled = false
     }
     stdout: StdioCollector {
       onStreamFinished: {
